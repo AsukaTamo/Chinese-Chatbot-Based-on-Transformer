@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python data_loader.py)",
-      "Bash(pip install *)"
-    ]
-  }
-}
