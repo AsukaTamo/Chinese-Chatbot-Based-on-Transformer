@@ -232,7 +232,8 @@ class ChatBot:
 
         # 加载模型
         self.model = Transformer(config)
-        checkpoint = torch.load(model_path, map_location=config.device, weights_only=False)
+        # 先加载到 CPU，然后移到目标设备（避免 CUDA 不可用时反序列化失败）
+        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(config.device)
         self.model.eval()
@@ -347,6 +348,11 @@ class ChatBot:
 
 def main():
     config = Config()
+
+    # 自动检测设备：CUDA 不可用时回退到 CPU
+    if config.device == "cuda" and not torch.cuda.is_available():
+        print("[Info] CUDA 不可用，回退到 CPU。")
+        config.device = "cpu"
 
     # 确定模型路径
     model_path = os.path.join(config.model_save_dir, "best_model.pt")
