@@ -1,140 +1,142 @@
-# Transformer 中文聊天机器人
+# Transformer Chinese Chatbot
 
-从零手写 Transformer，基于 PyTorch 实现的中文对话机器人（小黄鸡），参考论文 [Attention Is All You Need](https://arxiv.org/abs/1706.03762)。
+A Transformer chatbot built from scratch in PyTorch, trained on the XiaoHuangJi (小黄鸡) Chinese conversation dataset. Based on [Attention Is All You Need](https://arxiv.org/abs/1706.03762).
 
----
-
-## 特色
-
-- **纯手写 Transformer** — 不依赖 `torch.nn.Transformer`，逐模块实现 Encoder/Decoder/Multi-Head Attention
-- **Pre-LN 架构** — 使用 Pre-LayerNorm 结构，训练更稳定
-- **权重共享** — Encoder 嵌入、Decoder 嵌入、输出投影共享权重矩阵
-- **Noam 学习率调度** — 内置 Warmup 机制，复现原论文训练策略
-- **标签平滑** — 内存高效的 Label Smoothing Cross-Entropy 实现
-- **混合精度训练** — 支持 AMP 自动混合精度，节省显存
-- **多种解码策略** — Beam Search / 贪心 / 温度采样 (Top-K + Top-P)
+[中文文档](README_CN.md)
 
 ---
 
-## 项目结构
+## Features
+
+- **Transformer from scratch** — Encoder/Decoder/Multi-Head Attention implemented by hand, zero reliance on `torch.nn.Transformer`
+- **Pre-LN architecture** — Pre-LayerNorm for more stable training
+- **Weight tying** — Shared weights across Encoder embedding, Decoder embedding, and output projection
+- **Noam scheduler** — Learning rate warmup strategy from the original paper
+- **Label smoothing** — Memory-efficient cross-entropy with label smoothing
+- **Mixed precision training** — AMP support to reduce GPU memory usage
+- **Multiple decoding strategies** — Beam Search / Greedy / Temperature Sampling (Top-K + Top-P)
+
+---
+
+## Project Structure
 
 ```
 .
-├── model.py           # Transformer 模型（Encoder/Decoder/Attention/FFN）
-├── config.py          # 超参数配置（模型/训练/推理）
-├── data_loader.py     # 数据预处理、词汇表构建、DataLoader
-├── train.py           # 训练脚本（含 Noam 调度器 & 标签平滑损失）
-├── inference.py       # 推理 & 交互式聊天（Beam Search / 采样）
-├── vocab.json         # 词汇表文件（自动生成）
-├── checkpoints/       # 模型检查点保存目录
+├── model.py           # Transformer model (Encoder/Decoder/Attention/FFN)
+├── config.py          # Hyperparameters (model / training / inference)
+├── data_loader.py     # Data preprocessing, vocabulary builder, DataLoader
+├── train.py           # Training script (Noam scheduler + label smoothing loss)
+├── inference.py       # Inference & interactive chat (Beam Search / Sampling)
+├── vocab.json         # Vocabulary file (auto-generated)
+├── checkpoints/       # Model checkpoint directory
 │   ├── best_model.pt
 │   └── history.json
-├── xiaohuangji50w_fenciA.conv  # 小黄鸡对话语料（50w 条）
-└── requirements.txt   # 依赖
+├── xiaohuangji50w_fenciA.conv  # XiaoHuangJi conversation corpus (500k pairs)
+└── requirements.txt   # Dependencies
 ```
 
 ---
 
-## 快速开始
+## Quick Start
 
-### 1. 安装依赖
+### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
 - Python 3.10+
-- PyTorch 2.0+（推荐 CUDA 版本以启用 GPU 加速）
+- PyTorch 2.0+ (CUDA recommended for GPU acceleration)
 
-### 2. 训练模型
+### 2. Train the Model
 
 ```bash
 python train.py
 ```
 
-训练过程会：
-- 自动解析对话语料并构建词汇表（保存为 `vocab.json`）
-- 使用 Noam 调度器 + 标签平滑进行训练
-- 每个 epoch 验证一次，自动保存最佳模型到 `checkpoints/best_model.pt`
-- 训练历史记录在 `checkpoints/history.json`
+The training pipeline will:
+- Parse the conversation corpus and build a vocabulary (saved as `vocab.json`)
+- Train with Noam scheduler + label smoothing
+- Validate after each epoch and save the best model to `checkpoints/best_model.pt`
+- Record training history in `checkpoints/history.json`
 
-### 3. 交互式聊天
+### 3. Interactive Chat
 
 ```bash
 python inference.py
 ```
 
-聊天命令：
+Chat commands:
 
-| 命令 | 说明 |
-|------|------|
-| `/beam` | 切换为 Beam Search 解码 |
-| `/sample` | 切换为温度采样解码 |
-| `/greedy` | 切换为贪心解码 |
-| `quit` / `exit` | 退出 |
-
----
-
-## 配置
-
-在 [config.py](config.py) 中调整超参数：
-
-### 模型参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `d_model` | 128 | 词向量 / 隐层维度 |
-| `n_heads` | 8 | 多头注意力头数 |
-| `n_layers` | 6 | Encoder / Decoder 层数 |
-| `d_ff` | 2048 | 前馈网络隐层维度 |
-| `dropout` | 0.1 | Dropout 比例 |
-| `max_len` | 60 | 最大序列长度 |
-
-### 训练参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `batch_size` | 128 | 批次大小 |
-| `epochs` | 30 | 训练轮数 |
-| `warmup_steps` | 4000 | Noam 调度器预热步数 |
-| `label_smoothing` | 0.1 | 标签平滑系数 |
-| `grad_clip` | 1.0 | 梯度裁剪阈值 |
-
-### 推理参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `beam_size` | 5 | Beam Search 宽度 |
-| `temperature` | 0.8 | 采样温度 |
-| `length_penalty` | 0.6 | 长度惩罚系数（<1 鼓励短句） |
-| `max_decode_len` | 50 | 最大解码长度 |
+| Command | Description |
+|---------|-------------|
+| `/beam` | Switch to Beam Search decoding |
+| `/sample` | Switch to temperature sampling |
+| `/greedy` | Switch to greedy decoding |
+| `quit` / `exit` | Exit |
 
 ---
 
-## 模型架构
+## Configuration
+
+Adjust hyperparameters in [config.py](config.py):
+
+### Model Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `d_model` | 128 | Embedding / hidden dimension |
+| `n_heads` | 8 | Number of attention heads |
+| `n_layers` | 6 | Number of Encoder / Decoder layers |
+| `d_ff` | 2048 | Feed-forward hidden dimension |
+| `dropout` | 0.1 | Dropout rate |
+| `max_len` | 60 | Maximum sequence length |
+
+### Training Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `batch_size` | 128 | Batch size |
+| `epochs` | 30 | Number of training epochs |
+| `warmup_steps` | 4000 | Noam scheduler warmup steps |
+| `label_smoothing` | 0.1 | Label smoothing factor |
+| `grad_clip` | 1.0 | Gradient clipping threshold |
+
+### Inference Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `beam_size` | 5 | Beam Search width |
+| `temperature` | 0.8 | Sampling temperature |
+| `length_penalty` | 0.6 | Length penalty (<1 favors shorter outputs) |
+| `max_decode_len` | 50 | Maximum decoding length |
+
+---
+
+## Model Architecture
 
 ```
-输入文本 → Token Embedding + Positional Encoding
-         → Encoder (×N layers)
-            ├── Pre-LN → Multi-Head Self-Attention → Residual
-            └── Pre-LN → FeedForward → Residual
-         → Decoder (×N layers)
-            ├── Pre-LN → Masked Multi-Head Self-Attention → Residual
-            ├── Pre-LN → Multi-Head Cross-Attention → Residual
-            └── Pre-LN → FeedForward → Residual
-         → Linear Projection → Softmax → 输出文本
+Input → Token Embedding + Positional Encoding
+      → Encoder (×N layers)
+         ├── Pre-LN → Multi-Head Self-Attention → Residual
+         └── Pre-LN → FeedForward → Residual
+      → Decoder (×N layers)
+         ├── Pre-LN → Masked Multi-Head Self-Attention → Residual
+         ├── Pre-LN → Multi-Head Cross-Attention → Residual
+         └── Pre-LN → FeedForward → Residual
+      → Linear Projection → Softmax → Output
 ```
 
-### 关键实现细节
+### Key Implementation Details
 
-- **位置编码**: 正弦位置编码，预计算并注册为 buffer
-- **多头注意力**: 手写 `_split_heads` / `_merge_heads`，支持因果 mask 和 padding mask
-- **Pre-LN**: LayerNorm 放在子层之前，相比 Post-LN 训练更稳定
-- **标签平滑损失**: 用数学展开避免 `(N, V)` 维度的大张量分配，内存高效
+- **Positional Encoding**: Sinusoidal encoding, pre-computed and registered as a buffer
+- **Multi-Head Attention**: Custom `_split_heads` / `_merge_heads`, supporting causal and padding masks
+- **Pre-LN**: LayerNorm before each sub-layer — more stable than Post-LN
+- **Label Smoothing Loss**: Mathematically expanded to avoid allocating `(N, V)`-sized tensors for memory efficiency
 
 ---
 
-## 训练日志示例
+## Training Log Example
 
 ```
 Epoch  1 | Step   100 | Loss: 4.1234 | PPL: 61.7 | LR: 0.000123 | Time: 45s
@@ -147,11 +149,11 @@ Epoch  1/30 | Train Loss: 3.2145 | Val Loss: 3.0123 | Val PPL: 20.3 | Time: 120s
 
 ---
 
-## 数据集
+## Dataset
 
-使用小黄鸡对话语料（`xiaohuangji50w_fenciA.conv`），约 50 万条中文对话对。
+Trained on the XiaoHuangJi (小黄鸡) conversation corpus (`xiaohuangji50w_fenciA.conv`), containing ~500k Chinese dialogue pairs.
 
-**数据格式** — 每个对话段以 `E` 标记结尾，对话消息以 `M ` 前缀开头，消息中词语用 `/` 分隔：
+**Data format** — Each conversation segment ends with `E`, messages are prefixed with `M `, and tokens within a message are separated by `/`:
 
 ```
 M 你/在/干嘛
@@ -162,17 +164,17 @@ M 很/好/呀
 E
 ```
 
-相邻的 `M` 消息两两组为 Query-Response 对话对。
+Adjacent `M` messages are paired as Query-Response dialogue pairs.
 
 ---
 
-## 自定义数据集
+## Custom Dataset
 
-替换 `xiaohuangji50w_fenciA.conv` 文件即可使用自己的对话数据，格式保持一致即可。在 [config.py](config.py) 中修改 `data_path` 指定新文件路径。
+Replace `xiaohuangji50w_fenciA.conv` with your own conversation data in the same format. Update `data_path` in [config.py](config.py) to point to your file.
 
 ---
 
-## 依赖
+## Dependencies
 
 - **Python** ≥ 3.10
 - **PyTorch** ≥ 2.0.0
@@ -181,16 +183,19 @@ E
 
 ---
 
-## 参考文献
+## References
 
 - [Attention Is All You Need](https://arxiv.org/abs/1706.03762) — Vaswani et al., NeurIPS 2017
 - [Pre-LN Transformer](https://arxiv.org/abs/2002.04745) — Xiong et al.
 - [Rethinking Label Smoothing](https://arxiv.org/abs/1906.02629) — Müller et al.
+
 ---
 
-## 语料下载地址
+## Corpus Download
 
-https://github.com/candlewill/Dialog_Corpus
+[https://github.com/candlewill/Dialog_Corpus](https://github.com/candlewill/Dialog_Corpus)
+
+---
 
 ## License
 
