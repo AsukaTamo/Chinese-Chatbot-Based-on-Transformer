@@ -2,7 +2,7 @@
 
 从零手写 Transformer，基于 PyTorch 实现的中文对话机器人（小黄鸡），参考论文 [Attention Is All You Need](https://arxiv.org/abs/1706.03762)。
 
-[📖 English Docs](README.md)
+[📖 English Docs](README_ENG.md)
 
 ---
 
