@@ -15,6 +15,8 @@ A Transformer chatbot built from scratch in PyTorch, trained on the XiaoHuangJi 
 - **Label smoothing** — Memory-efficient cross-entropy with label smoothing
 - **Mixed precision training** — AMP support to reduce GPU memory usage
 - **Multiple decoding strategies** — Beam Search / Greedy / Temperature Sampling (Top-K + Top-P)
+- **Multi-corpus support** — Train on single or multiple corpora with one-line config switch; results auto-organized by corpus name
+- **CLI-driven training** — Start training with `--corpora`, `--epoch`, `--batch` flags — no need to edit config files
 
 ---
 
@@ -23,16 +25,26 @@ A Transformer chatbot built from scratch in PyTorch, trained on the XiaoHuangJi 
 ```
 .
 ├── model.py           # Transformer model (Encoder/Decoder/Attention/FFN)
-├── config.py          # Hyperparameters (model / training / inference)
+├── config.py          # Hyperparameters + corpus selection
 ├── data_loader.py     # Data preprocessing, vocabulary builder, DataLoader
-├── train.py           # Training script (Noam scheduler + label smoothing loss)
+├── train.py           # Training script (with CLI argument support)
 ├── inference.py       # Inference & interactive chat (Beam Search / Sampling)
-├── vocab.json         # Vocabulary file (auto-generated)
-├── checkpoints/       # Model checkpoint directory
-│   ├── best_model.pt
-│   └── history.json
-├── xiaohuangji50w_fenciA.conv  # XiaoHuangJi conversation corpus (500k pairs)
-└── requirements.txt   # Dependencies
+├── requirements.txt   # Dependencies
+│
+├── data/              # Corpus directory (one subfolder per corpus)
+│   ├── xiaohuangji/
+│   │   ├── xiaohuangji50w_fenciA.conv
+│   │   └── vocab.json
+│   └── xiaohuangji+weibo/     ← auto-created for multi-corpus
+│       └── vocab.json         ← merged vocabulary
+│
+└── checkpoints/       # Model checkpoints (one subfolder per corpus)
+    ├── xiaohuangji/
+    │   ├── best_model.pt
+    │   └── history.json
+    └── xiaohuangji+weibo/
+        ├── best_model.pt
+        └── history.json
 ```
 
 ---
@@ -51,35 +63,104 @@ pip install -r requirements.txt
 ### 2. Train the Model
 
 ```bash
+# Train with default config
 python train.py
+
+# Specify corpus
+python train.py --corpora xiaohuangji
+
+# Multi-corpus joint training
+python train.py --corpora xiaohuangji,weibo
+
+# Custom training parameters
+python train.py --corpora xiaohuangji --epoch 50 --batch 64
+
+# Show all CLI options
+python train.py --help
 ```
 
 The training pipeline will:
-- Parse the conversation corpus and build a vocabulary (saved as `vocab.json`)
+- Parse the conversation corpus and build a vocabulary (saved to `data/<corpus>/vocab.json`)
 - Train with Noam scheduler + label smoothing
-- Validate after each epoch and save the best model to `checkpoints/best_model.pt`
-- Record training history in `checkpoints/history.json`
+- Validate after each epoch and save the best model to `checkpoints/<corpus>/best_model.pt`
+- Record training history in `checkpoints/<corpus>/history.json`
 
-### 3. Interactive Chat
+### 3. Run Inference
+
+After training, the model is saved at `checkpoints/<corpus>/best_model.pt`, with the vocabulary at `data/<corpus>/vocab.json`.
+
+#### Interactive Chat
 
 ```bash
 python inference.py
 ```
 
+The script auto-loads the model specified by `corpora` in `config.py`. To switch corpora, change `corpora` in the config.
+
 Chat commands:
 
 | Command | Description |
 |---------|-------------|
-| `/beam` | Switch to Beam Search decoding |
-| `/sample` | Switch to temperature sampling |
-| `/greedy` | Switch to greedy decoding |
+| `/beam` | Switch to Beam Search decoding (best quality, default) |
+| `/sample` | Switch to temperature sampling (more diverse) |
+| `/greedy` | Switch to greedy decoding (fastest) |
 | `quit` / `exit` | Exit |
+
+#### Programmatic API
+
+```python
+from config import Config
+from inference import ChatBot
+
+config = Config()
+# To switch corpora: config.corpora = ("xiaohuangji",) → re-instantiate Config
+
+bot = ChatBot(config.best_model_path, config)
+
+# Beam Search (default, best quality)
+reply = bot.reply("你好", use_beam=True)
+print(reply)
+
+# Random sampling (more diverse)
+reply = bot.reply("你好", use_sample=True)
+print(reply)
+
+# Greedy decoding (fastest)
+reply = bot.reply("你好", use_beam=False, use_sample=False)
+print(reply)
+```
+
+#### Tuning Inference
+
+Adjust in [config.py](config.py):
+
+| Parameter | Guidance |
+|-----------|----------|
+| `beam_size` ↑ | Better quality, slower |
+| `temperature` ↑ | More diverse output (sampling mode) |
+| `length_penalty` < 1 | Favors shorter replies; > 1 favors longer replies |
 
 ---
 
 ## Configuration
 
-Adjust hyperparameters in [config.py](config.py):
+Adjust hyperparameters in [config.py](config.py), or override them via command-line flags:
+
+### Corpus Selection
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `corpora` | `("xiaohuangji",)` | Corpus names (folders under `data/`). Use `("a", "b")` for joint training |
+
+### CLI Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--corpora` | Corpus name(s), comma-separated for multi-corpus (e.g. `xiaohuangji,weibo`) |
+| `--epoch` | Number of training epochs |
+| `--batch` | Batch size |
+| `--device` | Training device: `cuda` / `cpu` |
+| `--resume` | Resume training from a checkpoint |
 
 ### Model Parameters
 
@@ -168,9 +249,43 @@ Adjacent `M` messages are paired as Query-Response dialogue pairs.
 
 ---
 
-## Custom Dataset
+## Corpus Management
 
-Replace `xiaohuangji50w_fenciA.conv` with your own conversation data in the same format. Update `data_path` in [config.py](config.py) to point to your file.
+### Single Corpus Training
+
+1. Place your `.conv` file in `data/<corpus_name>/`
+2. Set `corpora = ("<corpus_name>",)` in [config.py](config.py), or use the CLI:
+   ```bash
+   python train.py --corpora <corpus_name>
+   ```
+3. Vocabulary and checkpoints are auto-organized under `data/` and `checkpoints/`
+
+### Multi-Corpus Joint Training
+
+Combine multiple corpora for broader coverage:
+
+1. Place each corpus in its own folder under `data/`:
+   ```
+   data/
+   ├── xiaohuangji/
+   │   └── xiaohuangji50w_fenciA.conv
+   └── weibo/
+       └── weibo.conv
+   ```
+2. Specify via config or CLI:
+   ```bash
+   python train.py --corpora xiaohuangji,weibo
+   ```
+3. All dialogue pairs are merged into one training set with a unified vocabulary. Output goes to `checkpoints/xiaohuangji+weibo/`.
+
+### Adding a New Corpus
+
+Just create a folder under `data/` and drop in your `.conv` file. Required format:
+- Conversation segments end with `E`
+- Messages are prefixed with `M `
+- Words are separated by `/`
+
+The filename can be anything — the folder name becomes the corpus identifier.
 
 ---
 

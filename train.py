@@ -2,6 +2,7 @@ import math
 import os
 import time
 import json
+import argparse
 
 import torch
 import torch.nn as nn
@@ -304,5 +305,65 @@ def train(config: Config):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Transformer 中文聊天机器人 — 训练脚本",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python train.py                                          # 使用 config.py 中的默认配置
+  python train.py --corpora xiaohuangji                    # 单语料训练
+  python train.py --corpora xiaohuangji,weibo              # 多语料联合训练
+  python train.py --corpora xiaohuangji --epoch 50 --batch 64   # 自定义训练参数
+        """,
+    )
+
+    # ========== 语料 & 训练参数 ==========
+    parser.add_argument(
+        "--corpora", type=str, default=None,
+        help="语料库名称，多语料用逗号分隔（例: xiaohuangji 或 xiaohuangji,weibo）"
+    )
+    parser.add_argument(
+        "--epoch", type=int, default=None,
+        help="训练轮数（覆盖 config.py 中的 epochs）"
+    )
+    parser.add_argument(
+        "--batch", type=int, default=None,
+        help="批次大小（覆盖 config.py 中的 batch_size）"
+    )
+
+    # ========== 其他 ==========
+    parser.add_argument(
+        "--device", type=str, default=None, choices=["cuda", "cpu"],
+        help="训练设备（cuda / cpu），默认使用 config.py 配置"
+    )
+    parser.add_argument(
+        "--resume", type=str, default=None, metavar="PATH",
+        help="从指定 checkpoint 恢复训练"
+    )
+
+    args = parser.parse_args()
+
+    # ========== 加载 Config 并应用 CLI 覆盖 ==========
     config = Config()
+
+    if args.corpora is not None:
+        config.corpora = tuple(args.corpora.split(","))
+        # 重新触发 post_init 以更新路径
+        config._initialized = False
+        config.__post_init__()
+
+    if args.epoch is not None:
+        config.epochs = args.epoch
+    if args.batch is not None:
+        config.batch_size = args.batch
+    if args.device is not None:
+        config.device = args.device
+
+    # 打印运行配置
+    print(f"[Config] 语料: {config.corpus_name}")
+    print(f"[Config] 数据文件: {config.data_paths}")
+    print(f"[Config] 词表: {config.vocab_path}")
+    print(f"[Config] 模型保存: {config.model_save_dir}")
+    print(f"[Config] batch={config.batch_size}  epochs={config.epochs}")
+
     train(config)

@@ -8,13 +8,14 @@
 
 ## 特色
 
-- **纯手写 Transformer** — 不依赖 `torch.nn.Transformer`，逐模块实现 Encoder/Decoder/Multi-Head Attention
 - **Pre-LN 架构** — 使用 Pre-LayerNorm 结构，训练更稳定
 - **权重共享** — Encoder 嵌入、Decoder 嵌入、输出投影共享权重矩阵
 - **Noam 学习率调度** — 内置 Warmup 机制，复现原论文训练策略
 - **标签平滑** — 内存高效的 Label Smoothing Cross-Entropy 实现
 - **混合精度训练** — 支持 AMP 自动混合精度，节省显存
 - **多种解码策略** — Beam Search / 贪心 / 温度采样 (Top-K + Top-P)
+- **多语料支持** — 一行配置切换单语料 / 多语料联合训练，结果按语料名自动分目录管理
+- **命令行训练** — 支持 `--corpora`、`--epoch`、`--batch` 等参数，无需修改配置文件即可启动训练
 
 ---
 
@@ -23,16 +24,26 @@
 ```
 .
 ├── model.py           # Transformer 模型（Encoder/Decoder/Attention/FFN）
-├── config.py          # 超参数配置（模型/训练/推理）
+├── config.py          # 超参数配置 + 语料库选择
 ├── data_loader.py     # 数据预处理、词汇表构建、DataLoader
-├── train.py           # 训练脚本（含 Noam 调度器 & 标签平滑损失）
+├── train.py           # 训练脚本（支持命令行参数）
 ├── inference.py       # 推理 & 交互式聊天（Beam Search / 采样）
-├── vocab.json         # 词汇表文件（自动生成）
-├── checkpoints/       # 模型检查点保存目录
-│   ├── best_model.pt
-│   └── history.json
-├── xiaohuangji50w_fenciA.conv  # 小黄鸡对话语料（50w 条）
-└── requirements.txt   # 依赖
+├── requirements.txt   # 依赖
+│
+├── data/              # 语料目录（每个语料一个子文件夹）
+│   ├── xiaohuangji/
+│   │   ├── xiaohuangji50w_fenciA.conv
+│   │   └── vocab.json
+│   └── xiaohuangji+weibo/     ← 多语料时自动创建
+│       └── vocab.json         ← 合并词表
+│
+└── checkpoints/       # 模型检查点（每个语料一个子文件夹）
+    ├── xiaohuangji/
+    │   ├── best_model.pt
+    │   └── history.json
+    └── xiaohuangji+weibo/
+        ├── best_model.pt
+        └── history.json
 ```
 
 ---
@@ -51,35 +62,104 @@ pip install -r requirements.txt
 ### 2. 训练模型
 
 ```bash
+# 使用默认配置训练
 python train.py
+
+# 指定语料库
+python train.py --corpora xiaohuangji
+
+# 多语料联合训练
+python train.py --corpora xiaohuangji,weibo
+
+# 自定义训练参数
+python train.py --corpora xiaohuangji --epoch 50 --batch 64
+
+# 查看所有命令行参数
+python train.py --help
 ```
 
 训练过程会：
-- 自动解析对话语料并构建词汇表（保存为 `vocab.json`）
+- 自动解析对话语料并构建词汇表（保存到 `data/<语料名>/vocab.json`）
 - 使用 Noam 调度器 + 标签平滑进行训练
-- 每个 epoch 验证一次，自动保存最佳模型到 `checkpoints/best_model.pt`
-- 训练历史记录在 `checkpoints/history.json`
+- 每个 epoch 验证一次，自动保存最佳模型到 `checkpoints/<语料名>/best_model.pt`
+- 训练历史记录在 `checkpoints/<语料名>/history.json`
 
-### 3. 交互式聊天
+### 3. 使用模型推理
+
+训练完成后，模型保存在 `checkpoints/<语料名>/best_model.pt`，词表在 `data/<语料名>/vocab.json`。
+
+#### 交互式聊天
 
 ```bash
 python inference.py
 ```
 
-聊天命令：
+脚本会自动加载 `config.py` 中 `corpora` 指定的最新模型。如需切换语料，修改 `config.py` 中的 `corpora` 即可。
+
+聊天中可用命令：
 
 | 命令 | 说明 |
 |------|------|
-| `/beam` | 切换为 Beam Search 解码 |
-| `/sample` | 切换为温度采样解码 |
-| `/greedy` | 切换为贪心解码 |
+| `/beam` | 切换为 Beam Search 解码（质量最高，默认） |
+| `/sample` | 切换为温度采样解码（多样性高） |
+| `/greedy` | 切换为贪心解码（速度最快） |
 | `quit` / `exit` | 退出 |
+
+#### 程序化调用
+
+```python
+from config import Config
+from inference import ChatBot
+
+config = Config()
+# 如需切换语料：config.corpora = ("xiaohuangji",) → 重新实例化 Config
+
+bot = ChatBot(config.best_model_path, config)
+
+# Beam Search（默认，质量最高）
+reply = bot.reply("你好", use_beam=True)
+print(reply)
+
+# 随机采样（更多样化）
+reply = bot.reply("你好", use_sample=True)
+print(reply)
+
+# 贪心解码（速度最快）
+reply = bot.reply("你好", use_beam=False, use_sample=False)
+print(reply)
+```
+
+#### 推理参数调优
+
+在 [config.py](config.py) 中调整推理效果：
+
+| 参数 | 推荐场景 |
+|------|---------|
+| `beam_size` ↑ | 提高回复质量，但速度变慢 |
+| `temperature` ↑ | 提高回复多样性（采样模式下） |
+| `length_penalty` < 1 | 鼓励短回复；> 1 鼓励长回复 |
 
 ---
 
 ## 配置
 
-在 [config.py](config.py) 中调整超参数：
+在 [config.py](config.py) 中调整超参数，也可通过命令行覆盖部分参数：
+
+### 语料库选择
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `corpora` | `("xiaohuangji",)` | 语料库名称（`data/` 下的文件夹名）。多语料联合训练写 `("a", "b")` |
+
+### 命令行参数
+
+| 参数 | 说明 |
+|------|------|
+| `--corpora` | 语料库名称，多语料用逗号分隔（例: `xiaohuangji,weibo`） |
+| `--epoch` | 训练轮数 |
+| `--batch` | 批次大小 |
+| `--device` | 训练设备：`cuda` / `cpu` |
+| `--resume` | 从指定 checkpoint 恢复训练 |
 
 ### 模型参数
 
@@ -151,7 +231,7 @@ Epoch  1/30 | Train Loss: 3.2145 | Val Loss: 3.0123 | Val PPL: 20.3 | Time: 120s
 
 ## 数据集
 
-使用小黄鸡对话语料（`xiaohuangji50w_fenciA.conv`），约 50 万条中文对话对。
+默认使用小黄鸡对话语料（`xiaohuangji50w_fenciA.conv`），约 50 万条中文对话对。
 
 **数据格式** — 每个对话段以 `E` 标记结尾，对话消息以 `M ` 前缀开头，消息中词语用 `/` 分隔：
 
@@ -168,9 +248,43 @@ E
 
 ---
 
-## 自定义数据集
+## 语料库管理
 
-替换 `xiaohuangji50w_fenciA.conv` 文件即可使用自己的对话数据，格式保持一致即可。在 [config.py](config.py) 中修改 `data_path` 指定新文件路径。
+### 单语料训练
+
+1. 将 `.conv` 文件放入 `data/<语料名>/` 目录
+2. 在 [config.py](config.py) 中设置 `corpora = ("<语料名>",)`，或通过命令行指定：
+   ```bash
+   python train.py --corpora <语料名>
+   ```
+3. 词表和模型自动保存到对应目录
+
+### 多语料联合训练
+
+合并多个语料库以扩大对话覆盖范围：
+
+1. 每个语料放在 `data/` 下的独立文件夹中：
+   ```
+   data/
+   ├── xiaohuangji/
+   │   └── xiaohuangji50w_fenciA.conv
+   └── weibo/
+       └── weibo.conv
+   ```
+2. 通过 config 或命令行指定：
+   ```bash
+   python train.py --corpora xiaohuangji,weibo
+   ```
+3. 所有对话对合并训练，自动构建统一词表，结果保存到 `checkpoints/xiaohuangji+weibo/`
+
+### 添加新语料
+
+只需在 `data/` 下新建文件夹并放入 `.conv` 文件即可。数据格式要求：
+- 每个对话段以 `E` 标记结尾
+- 消息以 `M ` 前缀开头
+- 词语用 `/` 分隔
+
+文件名无限制，文件夹名即为语料标识符。
 
 ---
 

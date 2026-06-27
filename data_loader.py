@@ -211,26 +211,37 @@ def create_dataloaders(
 def prepare_data(config: Config):
     """
     一键完成数据预处理：解析文件 → 构建词汇表 → 保存词汇表 → 创建 DataLoader。
+
+    支持单语料和多语料联合训练：
+      - config.data_paths 包含一个或多个 .conv 文件路径
+      - 多语料时合并所有对话对，构建统一词表
+
     返回: (train_loader, val_loader, token2id, id2token)
     """
     print("=" * 60)
-    print("数据预处理开始")
+    print(f"数据预处理开始 — 语料: {config.corpus_name}")
     print("=" * 60)
 
-    # 1. 解析对话文件
-    print(f"[Data] 解析文件: {config.data_path}")
-    pairs = parse_conv_file(config.data_path)
-    print(f"[Data] 共提取 {len(pairs)} 个对话对")
+    # 1. 解析对话文件（支持多个语料）
+    all_pairs: list[tuple[str, str]] = []
+    for path in config.data_paths:
+        corpus_label = os.path.basename(os.path.dirname(path))
+        print(f"[Data] 解析语料 [{corpus_label}]: {path}")
+        pairs = parse_conv_file(path)
+        print(f"[Data]   → {len(pairs)} 个对话对")
+        all_pairs.extend(pairs)
+
+    print(f"[Data] 合并后总对话对: {len(all_pairs)}")
 
     # 2. 构建 / 加载词汇表
     if os.path.exists(config.vocab_path):
         token2id, id2token = load_vocab(config.vocab_path)
     else:
-        token2id, id2token = build_vocab(pairs, config)
+        token2id, id2token = build_vocab(all_pairs, config)
         save_vocab(token2id, id2token, config.vocab_path)
 
     # 3. 创建 DataLoader
-    train_loader, val_loader = create_dataloaders(pairs, token2id, config)
+    train_loader, val_loader = create_dataloaders(all_pairs, token2id, config)
 
     print("=" * 60)
     print("数据预处理完成")
