@@ -14,7 +14,7 @@ from config import Config, PAD_ID, SOS_ID, EOS_ID
 from data_loader import prepare_data, prepare_gpt_data
 from model import Transformer
 from model_gpt import GPT
-
+from model_m import GPT as GPT_m
 
 
 #  Noam 学习率调度器
@@ -305,10 +305,18 @@ def train(config: Config):
     print("=" * 60)
 
 
-def train_gpt(config: Config):
-    """GPT Decoder-Only 模型训练。"""
+def train_gpt(config: Config, model_cls=None):
+    """GPT Decoder-Only 模型训练。
+
+    参数:
+        model_cls: 模型类，默认 model_gpt.GPT；可传入 model_m.GPT 使用 RoPE。
+    """
+    if model_cls is None:
+        model_cls = GPT  # model_gpt.GPT
+
+    model_label = getattr(model_cls, "__name__", "GPT")
     print("=" * 60)
-    print("GPT Decoder-Only 中文聊天机器人 — 训练")
+    print(f"GPT Decoder-Only 中文聊天机器人 — 训练 ({model_label})")
     print("=" * 60)
 
     # 设备
@@ -325,9 +333,9 @@ def train_gpt(config: Config):
     config.vocab_size = actual_vocab_size
 
     # 模型
-    model = GPT(config).to(config.device)
+    model = model_cls(config).to(config.device)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"[Model] GPT 参数量: {total_params:,}")
+    print(f"[Model] {model_label} 参数量: {total_params:,}")
 
     # 损失函数（标准 CE，配合 loss_mask 使用）
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID, reduction="none")
@@ -343,7 +351,7 @@ def train_gpt(config: Config):
     best_val_loss = float("inf")
 
     print("\n" + "=" * 60)
-    print("开始训练 (GPT)")
+    print(f"开始训练 ({model_label})")
     print("=" * 60)
 
     for epoch in range(1, config.epochs + 1):
@@ -451,7 +459,7 @@ def train_gpt(config: Config):
         json.dump(history, f, indent=2)
 
     print("\n" + "=" * 60)
-    print(f"GPT 训练完成！最佳验证 Loss: {best_val_loss:.4f} (PPL: {math.exp(min(best_val_loss, 10)):.1f})")
+    print(f"{model_label} 训练完成！最佳验证 Loss: {best_val_loss:.4f} (PPL: {math.exp(min(best_val_loss, 10)):.1f})")
     print("=" * 60)
 
 
@@ -482,8 +490,8 @@ if __name__ == "__main__":
         help="批次大小（覆盖 config.py 中的 batch_size）"
     )
     parser.add_argument(
-        "--model", type=str, default=None, choices=["transformer", "gpt"],
-        help="模型架构: transformer (Encoder-Decoder) | gpt (Decoder-Only, 支持多轮记忆)"
+        "--model", type=str, default=None, choices=["transformer", "gpt", "rope"],
+        help="模型架构: transformer (Encoder-Decoder) | gpt (正弦PE) | rope (RoPE位置编码)"
     )
 
     # ========== 其他 ==========
@@ -526,5 +534,7 @@ if __name__ == "__main__":
 
     if config.model_type == "gpt":
         train_gpt(config)
+    elif config.model_type == "rope":
+        train_gpt(config, model_cls=GPT_m)
     else:
         train(config)

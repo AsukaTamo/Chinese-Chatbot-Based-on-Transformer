@@ -25,7 +25,7 @@ class Config:
     #  "transformer" = Encoder-Decoder（原有）
     #  "gpt"         = Decoder-Only（支持多轮记忆）
     model_type: str = "gpt"
-
+    model_path: str ="best_model_gpt.pt"
 
     #  模型架构参数
     d_model: int = 512             # 词向量 / 隐层维度
@@ -105,10 +105,6 @@ class Config:
 
 
     #  模型保存 / 加载路径辅助
-    @property
-    def best_model_path(self) -> str:
-        return os.path.join(self.model_save_dir, "best_model.pt")
-
     @property
     def history_path(self) -> str:
         return os.path.join(self.model_save_dir, "history.json")
