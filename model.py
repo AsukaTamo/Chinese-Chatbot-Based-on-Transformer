@@ -1,9 +1,21 @@
 import math
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.functional import scaled_dot_product_attention as sdpa
 
 from config import Config, PAD_ID
+
+
+def _prepare_sdpa_mask(mask: torch.Tensor | None, dtype: torch.dtype) -> torch.Tensor | None:
+    """将 bool mask (True=遮掩) 转为 SDPA 浮点加法 mask (-inf=遮掩)。"""
+    if mask is None:
+        return None
+    attn_mask = torch.zeros(mask.shape, dtype=dtype, device=mask.device)
+    attn_mask.masked_fill_(mask, float("-inf"))
+    return attn_mask
 
 
 
@@ -77,35 +89,49 @@ class MultiHeadAttention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        past_kv: tuple[torch.Tensor, torch.Tensor] | None = None,
+        use_cache: bool = False,
+    ):
         """
         query/key/value: (B, seq_len, d_model)
-        mask: (B, 1, 1, key_len) 或 (B, 1, q_len, key_len) — True = 遮掩
-        返回: (B, q_len, d_model)
+        mask: (B, 1, q_len, k_len) — bool, True = 遮掩
+        past_kv: 可选的 (past_K, past_V)，用于增量解码
+        use_cache: 是否返回当前 K/V 供后续步骤复用
+        返回: output (B, q_len, d_model) 或 (output, present_kv)
         """
         Q = self.w_q(query)
         K = self.w_k(key)
         V = self.w_v(value)
 
-        # 拆分为多头
         Q = self._split_heads(Q)  # (B, n_heads, q_len, d_k)
         K = self._split_heads(K)  # (B, n_heads, k_len, d_k)
         V = self._split_heads(V)  # (B, n_heads, k_len, d_k)
 
-        # 注意力分数
-        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale  # (B, n_heads, q_len, k_len)
+        # KV-Cache: 拼接历史 K/V
+        if past_kv is not None:
+            past_k, past_v = past_kv
+            K = torch.cat([past_k, K], dim=2)   # dim 2 = seq_len
+            V = torch.cat([past_v, V], dim=2)
 
-        if mask is not None:
-            # mask: (B, 1, q_len, k_len) 或 (B, 1, 1, k_len)
-            attn_scores = attn_scores.masked_fill(mask, float("-inf"))
+        present_kv = (K.detach(), V.detach()) if use_cache else None
 
-        attn_weights = F.softmax(attn_scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        # 使用 PyTorch SDPA（自动选择 Flash Attention / Memory Efficient 后端）
+        attn_mask_sdpa = _prepare_sdpa_mask(mask, Q.dtype)
+        dropout_p = self.dropout.p if self.training else 0.0
 
-        # 加权求和
-        output = torch.matmul(attn_weights, V)  # (B, n_heads, q_len, d_k)
-        output = self._merge_heads(output)       # (B, q_len, d_model)
-        return self.w_o(output)
+        output = sdpa(
+            Q, K, V,
+            attn_mask=attn_mask_sdpa,
+            dropout_p=dropout_p,
+            is_causal=False,
+        )  # (B, n_heads, q_len, d_k)
+
+        output = self._merge_heads(output)  # (B, q_len, d_model)
+        output = self.w_o(output)
+
+        if use_cache:
+            return output, present_kv
+        return output
 
 
 
@@ -213,34 +239,44 @@ class DecoderLayer(nn.Module):
         enc_output: torch.Tensor,
         self_mask: torch.Tensor | None = None,
         cross_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        past_kv: dict | None = None,
+        use_cache: bool = False,
+    ):
         """
         x: (B, tgt_len, d_model)
         enc_output: (B, src_len, d_model)
-        self_mask: (B, 1, tgt_len, tgt_len) — causal + padding mask
-        cross_mask: (B, 1, 1, src_len) — source padding mask
+        past_kv: {"self": (K,V), "cross": (K,V)} 或 None
+        返回: x 或 (x, new_kv_dict)
         """
+        past_self = past_kv["self"] if past_kv else None
+        past_cross = past_kv["cross"] if past_kv else None
+
         # Masked Self-Attention (Pre-LN)
         residual = x
-        x = self.norm1(x)
-        x = self.self_attn(x, x, x, self_mask)
-        x = self.dropout(x)
-        x = residual + x
+        x_norm = self.norm1(x)
+        result = self.self_attn(x_norm, x_norm, x_norm, self_mask, past_self, use_cache)
+        if use_cache:
+            x_attn, self_kv = result
+        else:
+            x_attn = result
+        x = residual + self.dropout(x_attn)
 
         # Cross-Attention (Pre-LN)
         residual = x
-        x = self.norm2(x)
-        x = self.cross_attn(x, enc_output, enc_output, cross_mask)
-        x = self.dropout(x)
-        x = residual + x
+        x_norm = self.norm2(x)
+        result = self.cross_attn(x_norm, enc_output, enc_output, cross_mask, past_cross, use_cache)
+        if use_cache:
+            x_attn, cross_kv = result
+        else:
+            x_attn = result
+        x = residual + self.dropout(x_attn)
 
         # FFN (Pre-LN)
         residual = x
-        x = self.norm3(x)
-        x = self.ffn(x)
-        x = self.dropout(x)
-        x = residual + x
+        x = residual + self.dropout(self.ffn(self.norm3(x)))
 
+        if use_cache:
+            return x, {"self": self_kv, "cross": cross_kv}
         return x
 
 
@@ -263,18 +299,31 @@ class Decoder(nn.Module):
         enc_output: torch.Tensor,
         self_mask: torch.Tensor | None = None,
         cross_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        past_key_values: list[dict] | None = None,
+        use_cache: bool = False,
+    ):
         """
         x: (B, tgt_len) — token IDs
         enc_output: (B, src_len, d_model)
+        past_key_values: 每层的 KV 缓存列表
+        返回: x 或 (x, new_past_key_values)
         """
         x = self.embedding(x) * math.sqrt(self.embedding.embedding_dim)
         x = self.pos_encoding(x)
 
-        for layer in self.layers:
-            x = layer(x, enc_output, self_mask, cross_mask)
+        new_past = [] if use_cache else None
+        for i, layer in enumerate(self.layers):
+            layer_past = past_key_values[i] if past_key_values else None
+            result = layer(x, enc_output, self_mask, cross_mask, layer_past, use_cache)
+            if use_cache:
+                x, layer_kv = result
+                new_past.append(layer_kv)
+            else:
+                x = result
 
         x = self.norm(x)
+        if use_cache:
+            return x, new_past
         return x
 
 
@@ -388,22 +437,39 @@ class Transformer(nn.Module):
         enc_output: torch.Tensor,
         tgt_pad_mask: torch.Tensor,
         cross_pad_mask: torch.Tensor,
-    ) -> torch.Tensor:
+        past_key_values: list[dict] | None = None,
+        use_cache: bool = False,
+    ):
         """
-        单步解码。
+        单步解码（支持 KV-Cache 增量解码）。
 
-        tgt_token: (B, 1) — 当前步的 token ID
+        tgt_token: (B, tgt_len) — 当前序列（含历史）
         enc_output: (B, src_len, d_model)
-        返回: (B, 1, vocab_size) — logits
+        past_key_values: 每层 KV 缓存，首次调用传 None
+        use_cache: 是否返回更新后的 KV 缓存
+
+        返回: logits (B, tgt_len, vocab_size)，若 use_cache=True 则返回 (logits, new_cache)
         """
         tgt_len = tgt_token.size(1)
-        causal = self.make_causal_mask(tgt_len, tgt_token.device)  # (1, 1, 1, 1) — 全 0
+
+        # 自注意力 mask（causal + padding）
+        causal = self.make_causal_mask(tgt_len, tgt_token.device)
         tgt_padding = tgt_pad_mask.unsqueeze(1).unsqueeze(2)
         dec_self_mask = causal | tgt_padding
+
+        # 交叉注意力 mask
         dec_cross_mask = self.make_padding_mask(cross_pad_mask)
 
-        dec_output = self.decoder(tgt_token, enc_output, dec_self_mask, dec_cross_mask)
-        return self.output_proj(dec_output)
+        result = self.decoder(
+            tgt_token, enc_output,
+            dec_self_mask, dec_cross_mask,
+            past_key_values, use_cache,
+        )
+        if use_cache:
+            dec_output, new_cache = result
+            return self.output_proj(dec_output), new_cache
+        else:
+            return self.output_proj(result)
 
 
 #  模型测试

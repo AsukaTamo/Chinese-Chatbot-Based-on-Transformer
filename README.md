@@ -8,12 +8,16 @@
 
 ## 特色
 
-- **Pre-LN 架构** — 使用 Pre-LayerNorm 结构，训练更稳定
+- **双架构支持** — Encoder-Decoder (Transformer) 和 Decoder-Only (GPT) 两种架构，一行配置切换
+- **短期记忆** — GPT 模式支持多轮对话上下文，自动维护历史记录
 - **权重共享** — Encoder 嵌入、Decoder 嵌入、输出投影共享权重矩阵
 - **Noam 学习率调度** — 内置 Warmup 机制，复现原论文训练策略
 - **标签平滑** — 内存高效的 Label Smoothing Cross-Entropy 实现
 - **混合精度训练** — 支持 AMP 自动混合精度，节省显存
 - **多种解码策略** — Beam Search / 贪心 / 温度采样 (Top-K + Top-P)
+- **SDPA 加速** — 使用 PyTorch `scaled_dot_product_attention`，自动启用 Flash Attention 后端
+- **KV-Cache 增量解码** — 推理时复用历史 K/V，速度提升 5-10 倍
+- **重复惩罚 + N-gram 阻断** — 消除模型重复输出"我我我"等退化现象
 - **多语料支持** — 一行配置切换单语料 / 多语料联合训练，结果按语料名自动分目录管理
 - **命令行训练** — 支持 `--corpora`、`--epoch`、`--batch` 等参数，无需修改配置文件即可启动训练
 
@@ -23,8 +27,9 @@
 
 ```
 .
-├── model.py           # Transformer 模型（Encoder/Decoder/Attention/FFN）
-├── config.py          # 超参数配置 + 语料库选择
+├── model.py           # Encoder-Decoder Transformer 模型
+├── model_gpt.py       # Decoder-Only GPT 模型（支持多轮记忆）
+├── config.py          # 超参数配置 + 语料库/模型选择
 ├── data_loader.py     # 数据预处理、词汇表构建、DataLoader
 ├── train.py           # 训练脚本（支持命令行参数）
 ├── inference.py       # 推理 & 交互式聊天（Beam Search / 采样）
@@ -62,21 +67,23 @@ pip install -r requirements.txt
 ### 2. 训练模型
 
 ```bash
-# 使用默认配置训练
-python train.py
+# GPT 模型训练（默认，支持多轮记忆）
+python train.py --model gpt --corpora xiaohuangji
 
-# 指定语料库
-python train.py --corpora xiaohuangji
+# Encoder-Decoder 训练
+python train.py --model transformer --corpora xiaohuangji
 
 # 多语料联合训练
-python train.py --corpora xiaohuangji,weibo
+python train.py --model gpt --corpora xiaohuangji,weibo
 
 # 自定义训练参数
-python train.py --corpora xiaohuangji --epoch 50 --batch 64
+python train.py --model gpt --corpora xiaohuangji --epoch 50 --batch 64
 
 # 查看所有命令行参数
 python train.py --help
 ```
+
+> `config.py` 中 `model_type = "gpt"` 控制默认架构，`d_model = 512` 已提升模型容量。
 
 训练过程会：
 - 自动解析对话语料并构建词汇表（保存到 `data/<语料名>/vocab.json`）
@@ -86,7 +93,7 @@ python train.py --help
 
 ### 3. 使用模型推理
 
-训练完成后，模型保存在 `checkpoints/<语料名>/best_model.pt`，词表在 `data/<语料名>/vocab.json`。
+训练完成后，模型保存在 `checkpoints/<语料名>/best_model.pt`。
 
 #### 交互式聊天
 
@@ -94,16 +101,32 @@ python train.py --help
 python inference.py
 ```
 
-脚本会自动加载 `config.py` 中 `corpora` 指定的最新模型。如需切换语料，修改 `config.py` 中的 `corpora` 即可。
-
-聊天中可用命令：
+根据 `config.py` 中 `model_type` 自动选择对应架构。GPT 模式下额外支持：
 
 | 命令 | 说明 |
 |------|------|
 | `/beam` | 切换为 Beam Search 解码（质量最高，默认） |
 | `/sample` | 切换为温度采样解码（多样性高） |
 | `/greedy` | 切换为贪心解码（速度最快） |
+| `/clear` | **清空对话记忆**（仅 GPT 模式） |
+| `/history` | **查看当前记忆**（仅 GPT 模式） |
 | `quit` / `exit` | 退出 |
+
+#### GPT 多轮对话示例
+
+```
+你: 我叫小明
+小黄鸡: 小明你好呀~
+
+你: 我叫什么名字？
+小黄鸡: 你叫小明呀，刚告诉我的~          ← 引用了上文
+
+你: /clear
+[记忆] 已清空
+
+你: 我叫什么名字？
+小黄鸡: 你没有告诉过我呀...              ← 记忆已清除
+```
 
 #### 程序化调用
 
@@ -129,6 +152,19 @@ reply = bot.reply("你好", use_beam=False, use_sample=False)
 print(reply)
 ```
 
+#### 推理加速与质量优化
+
+当前推理已内置以下优化（无需额外配置）：
+
+| 优化 | 说明 |
+|------|------|
+| **KV-Cache** | 增量解码，每步只计算新 token，历史 K/V 自动复用 |
+| **SDPA** | `scaled_dot_product_attention` 自动选择最优注意力后端 |
+| **重复惩罚** (×1.2) | 对已出现 token 降低概率，减少"我我我"重复 |
+| **3-gram 阻断** | 禁止生成与前面重复的三连词，消除机械重复 |
+
+可在 `inference.py` 的 `BeamSearchDecoder.__init__` 中调整 `repetition_penalty` 和 `ngram_block` 参数。
+
 #### 推理参数调优
 
 在 [config.py](config.py) 中调整推理效果：
@@ -150,11 +186,13 @@ print(reply)
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `corpora` | `("xiaohuangji",)` | 语料库名称（`data/` 下的文件夹名）。多语料联合训练写 `("a", "b")` |
+| `model_type` | `"gpt"` | 模型架构：`"gpt"` (Decoder-Only) 或 `"transformer"` (Encoder-Decoder) |
 
 ### 命令行参数
 
 | 参数 | 说明 |
 |------|------|
+| `--model` | 模型架构：`gpt` (默认) 或 `transformer` |
 | `--corpora` | 语料库名称，多语料用逗号分隔（例: `xiaohuangji,weibo`） |
 | `--epoch` | 训练轮数 |
 | `--batch` | 批次大小 |
@@ -165,7 +203,7 @@ print(reply)
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `d_model` | 128 | 词向量 / 隐层维度 |
+| `d_model` | 512 | 词向量 / 隐层维度 |
 | `n_heads` | 8 | 多头注意力头数 |
 | `n_layers` | 6 | Encoder / Decoder 层数 |
 | `d_ff` | 2048 | 前馈网络隐层维度 |

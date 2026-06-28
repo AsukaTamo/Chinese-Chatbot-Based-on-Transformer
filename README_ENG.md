@@ -9,12 +9,16 @@ A Transformer chatbot built from scratch in PyTorch, trained on the XiaoHuangJi 
 ## Features
 
 - **Transformer from scratch** — Encoder/Decoder/Multi-Head Attention implemented by hand, zero reliance on `torch.nn.Transformer`
-- **Pre-LN architecture** — Pre-LayerNorm for more stable training
+- **Dual architecture** — Encoder-Decoder (Transformer) and Decoder-Only (GPT), switch with one config line
+- **Short-term memory** — GPT mode maintains conversation history for multi-turn context
 - **Weight tying** — Shared weights across Encoder embedding, Decoder embedding, and output projection
 - **Noam scheduler** — Learning rate warmup strategy from the original paper
 - **Label smoothing** — Memory-efficient cross-entropy with label smoothing
 - **Mixed precision training** — AMP support to reduce GPU memory usage
 - **Multiple decoding strategies** — Beam Search / Greedy / Temperature Sampling (Top-K + Top-P)
+- **SDPA acceleration** — Uses PyTorch `scaled_dot_product_attention` with automatic Flash Attention backend
+- **KV-Cache incremental decoding** — Reuses historical K/V across steps, 5-10× inference speedup
+- **Repetition penalty + N-gram blocking** — Eliminates degenerate repetitive outputs
 - **Multi-corpus support** — Train on single or multiple corpora with one-line config switch; results auto-organized by corpus name
 - **CLI-driven training** — Start training with `--corpora`, `--epoch`, `--batch` flags — no need to edit config files
 
@@ -24,8 +28,9 @@ A Transformer chatbot built from scratch in PyTorch, trained on the XiaoHuangJi 
 
 ```
 .
-├── model.py           # Transformer model (Encoder/Decoder/Attention/FFN)
-├── config.py          # Hyperparameters + corpus selection
+├── model.py           # Encoder-Decoder Transformer model
+├── model_gpt.py       # Decoder-Only GPT model (multi-turn memory)
+├── config.py          # Hyperparameters + corpus/model selection
 ├── data_loader.py     # Data preprocessing, vocabulary builder, DataLoader
 ├── train.py           # Training script (with CLI argument support)
 ├── inference.py       # Inference & interactive chat (Beam Search / Sampling)
@@ -63,21 +68,23 @@ pip install -r requirements.txt
 ### 2. Train the Model
 
 ```bash
-# Train with default config
-python train.py
+# GPT model (default, supports multi-turn memory)
+python train.py --model gpt --corpora xiaohuangji
 
-# Specify corpus
-python train.py --corpora xiaohuangji
+# Encoder-Decoder training
+python train.py --model transformer --corpora xiaohuangji
 
 # Multi-corpus joint training
-python train.py --corpora xiaohuangji,weibo
+python train.py --model gpt --corpora xiaohuangji,weibo
 
 # Custom training parameters
-python train.py --corpora xiaohuangji --epoch 50 --batch 64
+python train.py --model gpt --corpora xiaohuangji --epoch 50 --batch 64
 
 # Show all CLI options
 python train.py --help
 ```
+
+> `config.py` defaults: `model_type = "gpt"`, `d_model = 512`.
 
 The training pipeline will:
 - Parse the conversation corpus and build a vocabulary (saved to `data/<corpus>/vocab.json`)
@@ -95,16 +102,32 @@ After training, the model is saved at `checkpoints/<corpus>/best_model.pt`, with
 python inference.py
 ```
 
-The script auto-loads the model specified by `corpora` in `config.py`. To switch corpora, change `corpora` in the config.
-
-Chat commands:
+Auto-selects architecture based on `config.model_type`. GPT mode adds memory commands:
 
 | Command | Description |
 |---------|-------------|
 | `/beam` | Switch to Beam Search decoding (best quality, default) |
 | `/sample` | Switch to temperature sampling (more diverse) |
 | `/greedy` | Switch to greedy decoding (fastest) |
+| `/clear` | **Clear conversation memory** (GPT only) |
+| `/history` | **View current memory** (GPT only) |
 | `quit` / `exit` | Exit |
+
+#### GPT Multi-Turn Example
+
+```
+你: 我叫小明
+小黄鸡: 小明你好呀~
+
+你: 我叫什么名字？
+小黄鸡: 你叫小明呀，刚告诉我的~          ← References earlier turn
+
+你: /clear
+[Memory] Cleared
+
+你: 我叫什么名字？
+小黄鸡: 你没有告诉过我呀...              ← Memory is gone
+```
 
 #### Programmatic API
 
@@ -130,6 +153,19 @@ reply = bot.reply("你好", use_beam=False, use_sample=False)
 print(reply)
 ```
 
+#### Inference Optimizations
+
+The following optimizations are enabled by default:
+
+| Feature | Description |
+|---------|-------------|
+| **KV-Cache** | Incremental decoding — only the new token is computed per step |
+| **SDPA** | `scaled_dot_product_attention` auto-selects optimal attention backend |
+| **Repetition penalty** (×1.2) | Reduces probability of already-generated tokens |
+| **3-gram blocking** | Bans repeated trigrams to prevent mechanical loops |
+
+Tune `repetition_penalty` and `ngram_block` in `BeamSearchDecoder.__init__` within `inference.py`.
+
 #### Tuning Inference
 
 Adjust in [config.py](config.py):
@@ -151,11 +187,13 @@ Adjust hyperparameters in [config.py](config.py), or override them via command-l
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `corpora` | `("xiaohuangji",)` | Corpus names (folders under `data/`). Use `("a", "b")` for joint training |
+| `model_type` | `"gpt"` | Model architecture: `"gpt"` (Decoder-Only) or `"transformer"` (Encoder-Decoder) |
 
 ### CLI Arguments
 
 | Argument | Description |
 |----------|-------------|
+| `--model` | Model architecture: `gpt` (default) or `transformer` |
 | `--corpora` | Corpus name(s), comma-separated for multi-corpus (e.g. `xiaohuangji,weibo`) |
 | `--epoch` | Number of training epochs |
 | `--batch` | Batch size |
@@ -166,7 +204,7 @@ Adjust hyperparameters in [config.py](config.py), or override them via command-l
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `d_model` | 128 | Embedding / hidden dimension |
+| `d_model` | 512 | Embedding / hidden dimension |
 | `n_heads` | 8 | Number of attention heads |
 | `n_layers` | 6 | Number of Encoder / Decoder layers |
 | `d_ff` | 2048 | Feed-forward hidden dimension |

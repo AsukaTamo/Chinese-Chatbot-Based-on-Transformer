@@ -21,13 +21,19 @@ class Config:
     min_freq: int = 3              # 最低词频阈值
 
 
+    #  模型选择
+    #  "transformer" = Encoder-Decoder（原有）
+    #  "gpt"         = Decoder-Only（支持多轮记忆）
+    model_type: str = "gpt"
+
+
     #  模型架构参数
-    d_model: int = 128             # 词向量 / 隐层维度
+    d_model: int = 512             # 词向量 / 隐层维度
     n_heads: int = 8               # 多头注意力头数
     n_layers: int = 6              # Encoder / Decoder 层数
     d_ff: int = 2048               # 前馈网络隐层维度
     dropout: float = 0.1           # Dropout 比例
-    max_len: int = 60              # 最大序列长度（已分词 token 数）
+    max_len: int = 120             # 最大序列长度（GPT 模式需更长以容纳多轮对话）
 
 
     #  训练参数
@@ -45,6 +51,7 @@ class Config:
     max_decode_len: int = 50
     temperature: float = 0.8
     length_penalty: float = 0.6
+    max_history: int = 4            # GPT 模式保留的最近对话轮数（0=不限）
 
 
     #  硬件
