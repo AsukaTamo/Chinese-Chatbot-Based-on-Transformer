@@ -8,8 +8,9 @@
 
 ## 特色
 
-- **双架构支持** — Encoder-Decoder (Transformer) 和 Decoder-Only (GPT) 两种架构，一行配置切换
-- **短期记忆** — GPT 模式支持多轮对话上下文，自动维护历史记录
+- **三档模型** — Lite (Transformer) / Middle (GPT) / Pro (Qwen-Chinese 预训练)，命令行自由切换
+- **短期记忆** — GPT / Pro 模式支持多轮对话上下文，自动维护历史记录
+- **预训练微调** — Pro 版基于 `uer/qwen-chinese-cluecorpussmall`（100M 参数），中文知识 + 对话微调
 - **权重共享** — Encoder 嵌入、Decoder 嵌入、输出投影共享权重矩阵
 - **Noam 学习率调度** — 内置 Warmup 机制，复现原论文训练策略
 - **标签平滑** — 内存高效的 Label Smoothing Cross-Entropy 实现
@@ -19,7 +20,9 @@
 - **KV-Cache 增量解码** — 推理时复用历史 K/V，速度提升 5-10 倍
 - **重复惩罚 + N-gram 阻断** — 消除模型重复输出"我我我"等退化现象
 - **多语料支持** — 一行配置切换单语料 / 多语料联合训练，结果按语料名自动分目录管理
-- **命令行训练** — 支持 `--corpora`、`--epoch`、`--batch` 等参数，无需修改配置文件即可启动训练
+- **命令行训练** — 支持 `--corpora`、`--epoch`、`--batch`、`--fenci` 等参数，无需修改配置文件即可启动训练
+- **双分词引擎** — `--fenci jieba`（词级）和 `--fenci space`（空格切分），适配不同语料格式
+- **双格式语料** — 支持 LCCC JSON（空格预分词）和 .conv（原始文本）两种语料格式
 
 ---
 
@@ -27,8 +30,9 @@
 
 ```
 .
-├── model.py           # Encoder-Decoder Transformer 模型
-├── model_gpt.py       # Decoder-Only GPT 模型（支持多轮记忆）
+├── model.py           # Encoder-Decoder Transformer (Lite)
+├── model_gpt.py       # Decoder-Only GPT 手写 (Middle)
+├── model_qwen.py      # Qwen-Chinese 预训练封装 (Pro)
 ├── config.py          # 超参数配置 + 语料库/模型选择
 ├── data_loader.py     # 数据预处理、词汇表构建、DataLoader
 ├── train.py           # 训练脚本（支持命令行参数）
@@ -38,9 +42,14 @@
 ├── data/              # 语料目录（每个语料一个子文件夹）
 │   ├── xiaohuangji/
 │   │   ├── xiaohuangji50w_fenciA.conv
-│   │   └── vocab.json
+│   │   ├── vocab_gpt.json            ← GPT 专用词表
+│   │   └── vocab_transformer.json    ← Transformer 专用词表
+│   ├── LCCC-base-split/              ← LCCC 大规模中文对话
+│   │   ├── LCCC-base_train.json      ← 8.9M 对话对（JSON 格式）
+│   │   ├── LCCC-base_valid.json
+│   │   └── LCCC-base_test.json
 │   └── xiaohuangji+weibo/     ← 多语料时自动创建
-│       └── vocab.json         ← 合并词表
+│       └── vocab_gpt.json     ← 合并词表
 │
 └── checkpoints/       # 模型检查点（每个语料一个子文件夹）
     ├── xiaohuangji/
@@ -67,23 +76,35 @@ pip install -r requirements.txt
 ### 2. 训练模型
 
 ```bash
-# GPT 模型训练（默认，支持多轮记忆）
-python train.py --model gpt --corpora xiaohuangji
+# Middle 版：从零训练手写 GPT（LCCC 大语料 + 空格分词）
+python train.py --model gpt --corpora LCCC-base-split --fenci space --epoch 10 --batch 32
 
-# Encoder-Decoder 训练
+# Middle 版：从零训练手写 GPT（小黄鸡小语料 + jieba 分词）
+python train.py --model gpt --corpora xiaohuangji --fenci jieba
+
+# Lite 版：Encoder-Decoder
 python train.py --model transformer --corpora xiaohuangji
 
-# 多语料联合训练
-python train.py --model gpt --corpora xiaohuangji,weibo
-
-# 自定义训练参数
-python train.py --model gpt --corpora xiaohuangji --epoch 50 --batch 64
+# Pro 版：微调预训练 Qwen-Chinese（首次自动下载 ~500MB 权重）
+python train.py --model qwen --corpora xiaohuangji --epoch 5 --batch 32
 
 # 查看所有命令行参数
 python train.py --help
 ```
 
-> `config.py` 中 `model_type = "gpt"` 控制默认架构，`d_model = 512` 已提升模型容量。
+> **分词选择**：LCCC 语料已用空格预分词，使用 `--fenci space` 速度提升约 20 倍且不需 jieba；原始中文文本（xiaohuangji）使用 `--fenci jieba`（默认）自动分词。
+
+> `config.py` 中 `model_type = "gpt"` 控制默认架构。Pro 版首次运行需联网下载权重。
+
+### 模型对比
+
+| 版本 | --model | 架构 | 参数量 | 记忆 | 效果 |
+|------|---------|------|--------|------|------|
+| Lite | `transformer` | Encoder-Decoder 手写 | ~15M | 无 | 基础 |
+| Middle | `gpt` | LLaMA-style Decoder-Only 手写 | ~76M* | ✓ | 中等 |
+| **Pro** | `qwen` | Qwen-Chinese 预训练 | ~100M | ✓ | **最强** |
+
+> \*GPT 参数量与 `vocab_size` 联动（输出投影 = vocab_size × d_model），vocab_size=100000 时约 76M，50000 时约 51M。
 
 训练过程会：
 - 自动解析对话语料并构建词汇表（保存到 `data/<语料名>/vocab.json`）
@@ -181,41 +202,45 @@ print(reply)
 
 在 [config.py](config.py) 中调整超参数，也可通过命令行覆盖部分参数：
 
-### 语料库选择
+### 语料与模型选择
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `corpora` | `("xiaohuangji",)` | 语料库名称（`data/` 下的文件夹名）。多语料联合训练写 `("a", "b")` |
-| `model_type` | `"gpt"` | 模型架构：`"gpt"` (Decoder-Only) 或 `"transformer"` (Encoder-Decoder) |
+| `model_type` | `"gpt"` | 模型架构：`"gpt"` (Decoder-Only) \| `"transformer"` (Encoder-Decoder) \| `"qwen"` (预训练) |
+| `fenci_mode` | `"jieba"` | 分词模式：`"jieba"` (词级别) \| `"space"` (空格切分，适用于 LCCC) |
+| `vocab_size` | 100000 | 词汇表上限（建议 LCCC 语料 50000，小语料按需调低） |
+| `min_freq` | 3 | 最低词频阈值，低于此频次的 token 被丢弃 |
 
 ### 命令行参数
 
 | 参数 | 说明 |
 |------|------|
-| `--model` | 模型架构：`gpt` (默认) 或 `transformer` |
+| `--model` | 模型架构：`transformer` \| `gpt` \| `qwen` |
 | `--corpora` | 语料库名称，多语料用逗号分隔（例: `xiaohuangji,weibo`） |
+| `--fenci` | 分词模式：`jieba` (默认) \| `space` |
 | `--epoch` | 训练轮数 |
 | `--batch` | 批次大小 |
 | `--device` | 训练设备：`cuda` / `cpu` |
 | `--resume` | 从指定 checkpoint 恢复训练 |
 
-### 模型参数
+### 模型架构参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `d_model` | 512 | 词向量 / 隐层维度 |
 | `n_heads` | 8 | 多头注意力头数 |
-| `n_layers` | 6 | Encoder / Decoder 层数 |
-| `d_ff` | 2048 | 前馈网络隐层维度 |
+| `n_layers` | 6 | Decoder 层数 |
+| `d_ff` | 2048 | SwiGLU 前馈网络隐层维度 |
 | `dropout` | 0.1 | Dropout 比例 |
-| `max_len` | 60 | 最大序列长度 |
+| `max_len` | 120 | 最大序列长度（GPT 模式需容纳 User + Query + Assistant + Response + EOS） |
 
 ### 训练参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `batch_size` | 128 | 批次大小 |
-| `epochs` | 30 | 训练轮数 |
+| `batch_size` | 64 | 批次大小（vocab_size=100000 时勿超过 64） |
+| `epochs` | 30 | 训练轮数（LCCC 大语料建议 5-10） |
 | `warmup_steps` | 4000 | Noam 调度器预热步数 |
 | `label_smoothing` | 0.1 | 标签平滑系数 |
 | `grad_clip` | 1.0 | 梯度裁剪阈值 |
@@ -233,6 +258,28 @@ print(reply)
 
 ## 模型架构
 
+### GPT Decoder-Only（LLaMA-style）
+
+```
+Token IDs → Embedding
+          → DecoderLayer × N
+             ├── RMSNorm → RoPE Multi-Head Self-Attention (无 bias) → Residual
+             ├── RMSNorm → SwiGLU Feed-Forward Network → Residual
+          → RMSNorm → Linear (共享 Embedding 权重) → Vocab Logits
+```
+
+GPT 架构特性：
+- **RMSNorm** — 比 LayerNorm 更轻量，去除了平移参数 (bias)
+- **RoPE** (Rotary Position Embedding) — 旋转位置编码，支持序列外推
+- **SwiGLU** — 现代 LLM 标配激活函数，优于 ReLU
+- **无 bias** — 所有线性层无 bias，遵循 LLaMA 风格
+- **Pre-Norm** — Normalization 在子层之前，训练更稳定
+- **Speaker Token** — `<|user|>` / `<|assistant|>` 区分对话角色
+- **全序列 Loss** — 模型学习完整对话流，而非仅助词回复
+- **KV-Cache 增量解码** — 推理时每步只计算新 token
+
+### Transformer Encoder-Decoder
+
 ```
 输入文本 → Token Embedding + Positional Encoding
          → Encoder (×N layers)
@@ -244,13 +291,6 @@ print(reply)
             └── Pre-LN → FeedForward → Residual
          → Linear Projection → Softmax → 输出文本
 ```
-
-### 关键实现细节
-
-- **位置编码**: 正弦位置编码，预计算并注册为 buffer
-- **多头注意力**: 手写 `_split_heads` / `_merge_heads`，支持因果 mask 和 padding mask
-- **Pre-LN**: LayerNorm 放在子层之前，相比 Post-LN 训练更稳定
-- **标签平滑损失**: 用数学展开避免 `(N, V)` 维度的大张量分配，内存高效
 
 ---
 
@@ -269,20 +309,88 @@ Epoch  1/30 | Train Loss: 3.2145 | Val Loss: 3.0123 | Val PPL: 20.3 | Time: 120s
 
 ## 数据集
 
-默认使用小黄鸡对话语料（`xiaohuangji50w_fenciA.conv`），约 50 万条中文对话对。
+### 内置语料
 
-**数据格式** — 每个对话段以 `E` 标记结尾，对话消息以 `M ` 前缀开头，消息中词语用 `/` 分隔：
+| 语料 | 标识符 | 规模 | 格式 | 推荐分词 |
+|------|--------|------|------|----------|
+| 小黄鸡 | `xiaohuangji` | ~50 万对话对 | `.conv` | `--fenci jieba` |
+| LCCC-base | `LCCC-base-split` | ~890 万对话对 | `.json` | `--fenci space` |
+
+> LCCC (Large-scale Clean Chinese Conversation) — 清华大学发布的大规模中文日常对话数据集。
+
+### .conv 语料格式规范
+
+所有 `.conv` 语料文件格式要求如下：
 
 ```
-M 你/在/干嘛
-M 在/跟/你/聊天/呀
-E
-M 今天/天气/怎么样
-M 很/好/呀
+M <原始中文文本>
+M <原始中文文本>
 E
 ```
 
-相邻的 `M` 消息两两组为 Query-Response 对话对。
+- 每条消息以 `M `（大写 M + 一个空格）开头，后跟**原始中文文本**（无需预分词，jieba 自动处理）
+- 每个对话段以单独一行 `E` 结尾
+- 段内相邻的 `M` 消息两两组为 Query-Response 对（第 1、2 条配对，第 3、4 条配对...）
+- 文件编码必须为 UTF-8
+
+**示例：**
+
+```
+M 你在干嘛
+M 在跟你聊天呀
+E
+M 今天天气怎么样
+M 很好呀
+E
+```
+
+### JSON 语料格式规范（LCCC 标准）
+
+```json
+[
+  ["消息1", "消息2", "消息3"],
+  ["消息1", "消息2"],
+  ...
+]
+```
+
+- 顶层是数组，每个元素是一次对话
+- 每次对话包含 N 条消息（N ≥ 2），消息以空格预分词（如 `"我 饿 了 。"`）
+- 相邻消息两两配对：(msg[0], msg[1]), (msg[2], msg[3]), ...
+- 文件编码 UTF-8
+
+**示例：**
+
+```json
+[
+  ["你 好 呀", "你 好 你 好"],
+  ["吃 了 吗", "还 没 呢", "那 一 起 呀"]
+]
+```
+
+> 第一条为 1 个 QA 对（"你好呀"→"你好你好"），第二条配对前两条（"吃了吗"→"还没呢"），第三条消息丢弃。
+
+### 分词引擎说明
+
+| --fenci | 处理方式 | 速度 | 适用场景 |
+|---------|---------|------|---------|
+| `jieba` (默认) | 先去除空格/`/` 分隔符，再 jieba 词级分词 | 慢 | `.conv` 原始中文文本 |
+| `space` | 直接按空格切分 | 快 (~20×) | `.json` LCCC 等预分词语料 |
+
+### 兼容性
+
+- 已有带 `/` 分隔符的旧版 `.conv` 文件也能正常使用——`tokenize()` 会自动移除 `/`，再用 jieba 重新分词
+- `.conv` 和 `.json` 可混合使用，程序按后缀自动选择解析器
+
+### 语料目录规范
+
+```
+data/
+└── <语料名>/           # 文件夹名 = 语料标识符（如 xiaohuangji、weibo）
+    └── *.conv          # 一个或多个 .conv 文件（文件名不限）
+```
+
+`<语料名>` 同时也是词表和检查点的目录名，多语料联合训练时以 `+` 连接（如 `xiaohuangji+weibo`）。
 
 ---
 
@@ -317,12 +425,23 @@ E
 
 ### 添加新语料
 
-只需在 `data/` 下新建文件夹并放入 `.conv` 文件即可。数据格式要求：
-- 每个对话段以 `E` 标记结尾
-- 消息以 `M ` 前缀开头
-- 词语用 `/` 分隔
+只需两步：
 
-文件名无限制，文件夹名即为语料标识符。
+1. 在 `data/` 下新建文件夹（文件夹名即为语料标识符）
+2. 放入 `.json` 或 `.conv` 格式的数据文件
+
+```bash
+# JSON 格式（推荐，LCCC 标准）
+mkdir -p data/mycorpus
+cp /path/to/data.json data/mycorpus/
+python train.py --corpora mycorpus --fenci space
+
+# .conv 格式（传统）
+cp /path/to/data.conv data/mycorpus/
+python train.py --corpora mycorpus --fenci jieba
+```
+
+JSON 语料如已用空格预分词，使用 `--fenci space` 速度显著更快。`.conv` 格式无需手动分词——jieba 会在构建词表时自动处理。旧版带 `/` 分隔符的语料也兼容，程序会自动移除并重新分词。
 
 ---
 
@@ -331,7 +450,9 @@ E
 - **Python** ≥ 3.10
 - **PyTorch** ≥ 2.0.0
 - **NumPy**
-- **tqdm**
+- **tqdm**（进度条）
+- **jieba**（`--fenci jieba` 模式下需要，`--fenci space` 不需要）
+- **transformers** ≥ 4.30.0（仅 Qwen Pro 版需要）
 
 ---
 
@@ -342,9 +463,12 @@ E
 - [Rethinking Label Smoothing](https://arxiv.org/abs/1906.02629) — Müller et al.
 ---
 
-## 语料下载地址
+## 语料下载
 
-https://github.com/candlewill/Dialog_Corpus
+| 语料 | 链接 | 说明 |
+|------|------|------|
+| 小黄鸡 | [Dialog_Corpus](https://github.com/candlewill/Dialog_Corpus) | 50 万中文对话对 |
+| LCCC-base | [LCCC](https://github.com/thu-coai/CDial-GPT) | 890 万中文日常对话（清华） |
 
 ## License
 

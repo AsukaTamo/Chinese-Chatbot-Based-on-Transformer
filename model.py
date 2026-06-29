@@ -1,21 +1,10 @@
 import math
-from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.functional import scaled_dot_product_attention as sdpa
 
 from config import Config, PAD_ID
-
-
-def _prepare_sdpa_mask(mask: torch.Tensor | None, dtype: torch.dtype) -> torch.Tensor | None:
-    """将 bool mask (True=遮掩) 转为 SDPA 浮点加法 mask (-inf=遮掩)。"""
-    if mask is None:
-        return None
-    attn_mask = torch.zeros(mask.shape, dtype=dtype, device=mask.device)
-    attn_mask.masked_fill_(mask, float("-inf"))
-    return attn_mask
 
 
 
@@ -47,6 +36,7 @@ class PositionalEncoding(nn.Module):
         返回: (B, seq_len, d_model)
         """
         x = x + self.pe[:, : x.size(1), :]
+        x = x.contiguous()  # pe 切片是 strided view，加法结果可能不连续
         return self.dropout(x)
 
 
@@ -75,7 +65,7 @@ class MultiHeadAttention(nn.Module):
         """(B, seq_len, d_model) → (B, n_heads, seq_len, d_k)"""
         B, seq_len, _ = x.shape
         x = x.view(B, seq_len, self.n_heads, self.d_k)
-        return x.permute(0, 2, 1, 3)  # (B, n_heads, seq_len, d_k)
+        return x.permute(0, 2, 1, 3).contiguous()  # (B, n_heads, seq_len, d_k)
 
     def _merge_heads(self, x: torch.Tensor) -> torch.Tensor:
         """(B, n_heads, seq_len, d_k) → (B, seq_len, d_model)"""
@@ -110,21 +100,21 @@ class MultiHeadAttention(nn.Module):
         # KV-Cache: 拼接历史 K/V
         if past_kv is not None:
             past_k, past_v = past_kv
-            K = torch.cat([past_k, K], dim=2)   # dim 2 = seq_len
-            V = torch.cat([past_v, V], dim=2)
+            K = torch.cat([past_k, K], dim=2).contiguous()   # dim 2 = seq_len
+            V = torch.cat([past_v, V], dim=2).contiguous()
 
         present_kv = (K.detach(), V.detach()) if use_cache else None
 
-        # 使用 PyTorch SDPA（自动选择 Flash Attention / Memory Efficient 后端）
-        attn_mask_sdpa = _prepare_sdpa_mask(mask, Q.dtype)
-        dropout_p = self.dropout.p if self.training else 0.0
+        # 手动缩放点积注意力（兼容所有 PyTorch 版本，序列短时与 SDPA 性能差异可忽略）
+        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
 
-        output = sdpa(
-            Q, K, V,
-            attn_mask=attn_mask_sdpa,
-            dropout_p=dropout_p,
-            is_causal=False,
-        )  # (B, n_heads, q_len, d_k)
+        if mask is not None:
+            attn_scores = attn_scores.masked_fill(mask, float("-inf"))
+
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        output = torch.matmul(attn_weights, V)  # (B, n_heads, q_len, d_k)
 
         output = self._merge_heads(output)  # (B, q_len, d_model)
         output = self.w_o(output)
@@ -249,7 +239,6 @@ class DecoderLayer(nn.Module):
         返回: x 或 (x, new_kv_dict)
         """
         past_self = past_kv["self"] if past_kv else None
-        past_cross = past_kv["cross"] if past_kv else None
 
         # Masked Self-Attention (Pre-LN)
         residual = x
@@ -261,14 +250,10 @@ class DecoderLayer(nn.Module):
             x_attn = result
         x = residual + self.dropout(x_attn)
 
-        # Cross-Attention (Pre-LN)
+        # Cross-Attention (Pre-LN) — Encoder K/V 固定，不缓存不复用
         residual = x
         x_norm = self.norm2(x)
-        result = self.cross_attn(x_norm, enc_output, enc_output, cross_mask, past_cross, use_cache)
-        if use_cache:
-            x_attn, cross_kv = result
-        else:
-            x_attn = result
+        x_attn = self.cross_attn(x_norm, enc_output, enc_output, cross_mask, None, False)
         x = residual + self.dropout(x_attn)
 
         # FFN (Pre-LN)
@@ -276,7 +261,7 @@ class DecoderLayer(nn.Module):
         x = residual + self.dropout(self.ffn(self.norm3(x)))
 
         if use_cache:
-            return x, {"self": self_kv, "cross": cross_kv}
+            return x, {"self": self_kv}
         return x
 
 

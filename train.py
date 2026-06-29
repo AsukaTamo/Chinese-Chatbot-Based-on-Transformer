@@ -11,9 +11,10 @@ from torch.optim import Adam
 from torch.amp import GradScaler, autocast
 
 from config import Config, PAD_ID, SOS_ID, EOS_ID
-from data_loader import prepare_data, prepare_gpt_data
+from data_loader import prepare_data, prepare_gpt_data, prepare_qwen_data
 from model import Transformer
 from model_gpt import GPT
+from model_qwen import PretrainedLM
 
 
 
@@ -286,6 +287,9 @@ def train(config: Config):
                 "optimizer_state_dict": optimizer.state_dict(),
                 "val_loss": val_loss,
                 "val_ppl": val_ppl,
+                "model_type": "transformer",
+                "d_model": config.d_model,
+                "vocab_size": actual_vocab_size,
                 "config": config,
                 "history": history,
             }
@@ -439,6 +443,8 @@ def train_gpt(config: Config):
                 "epoch": epoch, "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "val_loss": val_loss, "val_ppl": val_ppl,
+                "model_type": "gpt", "d_model": config.d_model,
+                "vocab_size": actual_vocab_size,
                 "config": config, "history": history,
             }
             torch.save(checkpoint, os.path.join(config.model_save_dir, "best_model.pt"))
@@ -452,6 +458,132 @@ def train_gpt(config: Config):
 
     print("\n" + "=" * 60)
     print(f"GPT 训练完成！最佳验证 Loss: {best_val_loss:.4f} (PPL: {math.exp(min(best_val_loss, 10)):.1f})")
+    print("=" * 60)
+
+
+def train_qwen(config: Config):
+    """Qwen 预训练模型微调。"""
+    print("=" * 60)
+    print("Qwen-Chinese 预训练模型微调 (Pro)")
+    print("=" * 60)
+
+    if not torch.cuda.is_available():
+        config.device = "cpu"
+    print(f"[Device] {config.device}")
+
+    # 加载预训练模型
+    model = PretrainedLM(model_name=config.qwen_model_name)
+    if config.qwen_freeze_layers > 0:
+        model.freeze_bottom_layers(config.qwen_freeze_layers)
+    model.to(config.device)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"[Model] Qwen 参数量: {total_params:,}")
+
+    # 数据
+    tokenizer = model.tokenizer
+    train_loader, val_loader = prepare_qwen_data(config, tokenizer)
+
+    # 优化器（微调用小学习率）
+    optimizer = Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=5e-5, betas=(0.9, 0.999), eps=1e-8,
+    )
+    scaler = GradScaler() if config.device == "cuda" else None
+
+    # 保存目录
+    qwen_save_dir = os.path.join(config.model_save_dir, "qwen_finetuned")
+    os.makedirs(qwen_save_dir, exist_ok=True)
+
+    history: dict = {"train_loss": [], "val_loss": []}
+    best_val_loss = float("inf")
+
+    print("\n" + "=" * 60)
+    print("开始微调 Qwen")
+    print("=" * 60)
+
+    for epoch in range(1, config.epochs + 1):
+        epoch_start = time.time()
+
+        # ---- Train ----
+        model.train()
+        total_loss = 0.0
+        total_steps = 0
+
+        for step, batch in enumerate(train_loader):
+            input_ids = batch["input_ids"].to(config.device)
+            attention_mask = batch["attention_mask"].to(config.device)
+            labels = batch["labels"].to(config.device)
+
+            optimizer.zero_grad()
+
+            use_amp = scaler is not None
+            if use_amp:
+                with autocast("cuda"):
+                    out = model(input_ids, attention_mask, labels)
+                    loss = out.loss
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+            else:
+                out = model(input_ids, attention_mask, labels)
+                loss = out.loss
+                loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+
+            total_loss += loss.item()
+            total_steps += 1
+
+            if (step + 1) % config.log_every == 0:
+                avg_loss = total_loss / total_steps
+                ppl = math.exp(min(avg_loss, 10))
+                print(f"  Epoch {epoch} | Step {step+1:5d} | "
+                      f"Loss: {avg_loss:.4f} | PPL: {ppl:6.1f} | "
+                      f"Time: {time.time()-epoch_start:.0f}s")
+
+        train_loss = total_loss / max(total_steps, 1)
+
+        # ---- Val ----
+        model.eval()
+        val_loss_sum = 0.0
+        val_steps = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                input_ids = batch["input_ids"].to(config.device)
+                attention_mask = batch["attention_mask"].to(config.device)
+                labels = batch["labels"].to(config.device)
+                out = model(input_ids, attention_mask, labels)
+                val_loss_sum += out.loss.item()
+                val_steps += 1
+
+        val_loss = val_loss_sum / max(val_steps, 1)
+        val_ppl = math.exp(min(val_loss, 10))
+        epoch_time = time.time() - epoch_start
+
+        print("-" * 60)
+        print(f"Epoch {epoch:2d}/{config.epochs} | "
+              f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
+              f"Val PPL: {val_ppl:6.1f} | Time: {epoch_time:.0f}s")
+        print("-" * 60)
+
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            model.save_pretrained(qwen_save_dir)
+            print(f"  + 最佳模型已保存至: {qwen_save_dir}")
+
+    with open(os.path.join(qwen_save_dir, "history.json"), "w") as f:
+        json.dump(history, f, indent=2)
+
+    print("\n" + "=" * 60)
+    print(f"Qwen 微调完成！最佳 Val Loss: {best_val_loss:.4f}")
     print("=" * 60)
 
 
@@ -482,8 +614,12 @@ if __name__ == "__main__":
         help="批次大小（覆盖 config.py 中的 batch_size）"
     )
     parser.add_argument(
-        "--model", type=str, default=None, choices=["transformer", "gpt"],
-        help="模型架构: transformer (Encoder-Decoder) | gpt (Decoder-Only, 支持多轮记忆)"
+        "--model", type=str, default=None, choices=["transformer", "gpt", "qwen"],
+        help="模型架构: transformer (Lite) | gpt (Middle) | qwen (Pro, 预训练)"
+    )
+    parser.add_argument(
+        "--fenci", type=str, default=None, choices=["jieba", "space"],
+        help="分词模式: jieba (默认) | space (LCCC 等已预分词语料)"
     )
 
     # ========== 其他 ==========
@@ -515,6 +651,8 @@ if __name__ == "__main__":
         config.batch_size = args.batch
     if args.device is not None:
         config.device = args.device
+    if args.fenci is not None:
+        config.fenci_mode = args.fenci
 
     # 打印运行配置
     print(f"[Config] 模型类型: {config.model_type}")
@@ -523,8 +661,11 @@ if __name__ == "__main__":
     print(f"[Config] 词表: {config.vocab_path}")
     print(f"[Config] 模型保存: {config.model_save_dir}")
     print(f"[Config] d_model={config.d_model}  batch={config.batch_size}  epochs={config.epochs}")
+    print(f"[Config] 分词模式: {config.fenci_mode}")
 
-    if config.model_type == "gpt":
+    if config.model_type == "qwen":
+        train_qwen(config)
+    elif config.model_type == "gpt":
         train_gpt(config)
     else:
         train(config)
