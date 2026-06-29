@@ -622,17 +622,12 @@ if __name__ == "__main__":
         help="批次大小（覆盖 config.py 中的 batch_size）"
     )
     parser.add_argument(
-<<<<<<< HEAD
-        "--model", type=str, default=None, choices=["transformer", "gpt", "rope"],
-        help="模型架构: transformer (Encoder-Decoder) | gpt (正弦PE) | rope (RoPE位置编码)"
-=======
         "--model", type=str, default=None, choices=["transformer", "gpt", "qwen"],
-        help="模型架构: transformer (Lite) | gpt (Middle) | qwen (Pro, 预训练)"
+        help="模型架构: transformer (Lite) | gpt (Middle, LLaMA-style+RoPE) | qwen (Pro, 预训练)"
     )
     parser.add_argument(
         "--fenci", type=str, default=None, choices=["jieba", "space"],
         help="分词模式: jieba (默认) | space (LCCC 等已预分词语料)"
->>>>>>> 6510dc1 (feat: LCCC JSON 格式支持 + --fenci 双分词引擎 + LLaMA GPT 架构)
     )
 
     # ========== 其他 ==========
