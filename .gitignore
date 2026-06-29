@@ -1,3 +1,6 @@
 __pycache__/
 /env/
 /another/
+.claude/
+checkpoints/
+data/LCCC-base-split/
