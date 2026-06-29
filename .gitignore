@@ -1,6 +1,13 @@
 __pycache__/
+
 /env/
+
 .claude/
+
+/.vscode/
+
 checkpoints/
+
 data/LCCC-base-split/
+
 voice_module/model_voice/
