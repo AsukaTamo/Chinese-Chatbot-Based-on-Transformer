@@ -1,5 +1,7 @@
 __pycache__/
 /env/
+/.vscode/
+
 /another/
 checkpoints/
 data/LCCC-base-split/
