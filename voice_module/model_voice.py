@@ -12,7 +12,7 @@ def voice_to_words(voice_path:str,model_size:str):
     print("="*5+"vtw:初始化完成"+"="*5)
     print("识别中...")
 
-    egments, info = model.transcribe(voice_path, beam_size=5, language="zh", initial_prompt="以下是普通话话语。")
+    segments, info = model.transcribe(voice_path, beam_size=5, language="zh", initial_prompt="以下是普通话话语。")
     
     print("识别完成/^-^/")
 
