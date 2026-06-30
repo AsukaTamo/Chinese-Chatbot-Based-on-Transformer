@@ -48,12 +48,16 @@ class RoPE(nn.Module):
     其中 R_m 是按位置 m 旋转角度 m·θ_i 的旋转矩阵。
 
     频率: θ_i = base^(-2i/d),  i ∈ [0, d/2)
+
+    预计算 cos/sin 表用于快速查表；当位置超出表范围（如增量解码超过
+    config.max_len）时自动降级为动态计算，不影响推理正确性。
     """
 
     def __init__(self, d_k: int, max_len: int = 2048, base: float = 10000.0):
         super().__init__()
         self.d_k = d_k
         self.max_len = max_len
+        self.base = base
 
         # 预计算 cos(m·θ_i), sin(m·θ_i) 表: (max_len, d_k/2)
         theta = 1.0 / (base ** (torch.arange(0, d_k, 2).float() / d_k))
@@ -61,6 +65,26 @@ class RoPE(nn.Module):
         freqs = torch.outer(positions, theta)                # (max_len, d_k/2)
         self.register_buffer("cos_table", freqs.cos())       # (max_len, d_k/2)
         self.register_buffer("sin_table", freqs.sin())
+
+    def _get_rotations(
+        self, offset: int, seq_len: int, device: torch.device, dtype: torch.dtype
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """获取位置 [offset, offset+seq_len) 的 cos/sin 旋转量 (1, 1, seq_len, d_k/2)。"""
+        max_needed = offset + seq_len
+        table_len = self.cos_table.size(0)
+
+        if max_needed <= table_len:
+            cos = self.cos_table[offset:max_needed, :].to(dtype)
+            sin = self.sin_table[offset:max_needed, :].to(dtype)
+        else:
+            # 位置超出预计算表 → 动态计算（增量解码超过训练 max_len 时触发）
+            theta = 1.0 / (self.base ** (torch.arange(0, self.d_k, 2, device=device).float() / self.d_k))
+            positions = torch.arange(offset, max_needed, device=device).float()
+            freqs = torch.outer(positions, theta)
+            cos = freqs.cos().to(dtype)
+            sin = freqs.sin().to(dtype)
+
+        return cos.unsqueeze(0).unsqueeze(0), sin.unsqueeze(0).unsqueeze(0)
 
     def forward(
         self,
@@ -72,14 +96,7 @@ class RoPE(nn.Module):
         q, k: (B, n_heads, seq_len, d_k)
         offset: KV-Cache 已有长度（增量解码时使用）
         """
-        seq_len = q.size(2)
-        cos = self.cos_table[offset:offset + seq_len, :]   # (seq_len, d_k/2)
-        sin = self.sin_table[offset:offset + seq_len, :]
-
-        # broadcast: (1, 1, seq_len, d_k/2)
-        cos = cos.unsqueeze(0).unsqueeze(0)
-        sin = sin.unsqueeze(0).unsqueeze(0)
-
+        cos, sin = self._get_rotations(offset, q.size(2), q.device, q.dtype)
         q_rot = _rotate_half(q, cos, sin)
         k_rot = _rotate_half(k, cos, sin)
         return q_rot, k_rot

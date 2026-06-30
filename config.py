@@ -13,7 +13,7 @@ class Config:
     #  语料库配置（修改这里切换训练语料）
     #  单语料:  corpora = ("xiaohuangji",)
     #  多语料:  corpora = ("xiaohuangji", "weibo")
-    corpora: tuple = ("xiaohuangji",)
+    corpora: tuple = ("LCCC-base-split",)
 
     #  词汇表配置
 
@@ -43,7 +43,7 @@ class Config:
     n_layers: int = 6              # Encoder / Decoder 层数
     d_ff: int = 2048               # 前馈网络隐层维度
     dropout: float = 0.1           # Dropout 比例
-    max_len: int = 120             # 最大序列长度（GPT 模式需更长以容纳多轮对话）
+    max_len: int = 120             # 最大序列长度（RoPE 动态外推，解码时不受此限制）
 
 
     #  训练参数
