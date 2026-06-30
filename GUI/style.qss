@@ -1,0 +1,274 @@
+/* =======================================================
+   全局
+   ======================================================= */
+
+* {
+    font-family: "Microsoft YaHei";
+    font-size: 14px;
+    color: #ECECF1;
+}
+
+QMainWindow,
+QWidget {
+    background: #343541;
+}
+
+/* =======================================================
+   Header
+   ======================================================= */
+
+#Header {
+    background: #202123;
+    border-bottom: 1px solid #444654;
+}
+
+#HeaderTitle {
+    font-size: 22px;
+    font-weight: bold;
+    color: white;
+}
+
+#StatusLabel {
+    color: #10A37F;
+    font-size: 14px;
+}
+
+/* =======================================================
+   Sidebar
+   ======================================================= */
+
+#Sidebar {
+    background: #202123;
+    border-right: 1px solid #444654;
+}
+
+#SidebarTitle {
+    font-size: 20px;
+    font-weight: bold;
+    color: white;
+}
+
+#VersionLabel {
+    color: #888;
+    font-size: 12px;
+}
+
+#SidebarLine {
+    color: #444654;
+}
+
+/* =======================================================
+   新建聊天按钮
+   ======================================================= */
+
+#NewChatButton {
+
+    background: #343541;
+
+    border: 1px solid #565869;
+
+    border-radius: 10px;
+
+    padding: 10px;
+
+    text-align: left;
+}
+
+#NewChatButton:hover {
+
+    background: #444654;
+}
+
+#NewChatButton:pressed {
+
+    background: #565869;
+}
+
+/* =======================================================
+   History
+   ======================================================= */
+
+#HistoryList {
+
+    border: none;
+
+    outline: none;
+
+    background: transparent;
+}
+
+#HistoryList::item {
+
+    padding: 10px;
+
+    border-radius: 8px;
+
+    margin: 2px;
+}
+
+#HistoryList::item:hover {
+
+    background: #2A2B32;
+}
+
+#HistoryList::item:selected {
+
+    background: #40414F;
+}
+
+/* =======================================================
+   ChatView
+   ======================================================= */
+
+#ChatView {
+
+    background: #343541;
+}
+
+/* =======================================================
+   Bubble
+   ======================================================= */
+
+#UserBubble {
+
+    background: #10A37F;
+
+    border-radius: 14px;
+}
+
+#BotBubble {
+
+    background: #444654;
+
+    border-radius: 14px;
+}
+
+#BubbleName {
+
+    color: #AEB0B8;
+
+    font-size: 12px;
+
+    font-weight: bold;
+}
+
+#BubbleTime {
+
+    color: #888;
+
+    font-size: 11px;
+}
+
+/* =======================================================
+   Input
+   ======================================================= */
+
+#InputPanel {
+
+    background: #40414F;
+
+    border-top: 1px solid #565869;
+}
+
+QTextEdit {
+
+    background: #4A4B57;
+
+    border: none;
+
+    border-radius: 12px;
+
+    padding: 10px;
+
+    color: white;
+
+    selection-background-color: #10A37F;
+}
+
+QTextEdit:focus {
+
+    border: 2px solid #10A37F;
+}
+
+/* =======================================================
+   Send Button
+   ======================================================= */
+
+#SendButton {
+
+    background: #10A37F;
+
+    border-radius: 24px;
+
+    color: white;
+
+    font-size: 18px;
+
+    font-weight: bold;
+
+    border: none;
+}
+
+#SendButton:hover {
+
+    background: #14B88A;
+}
+
+#SendButton:pressed {
+
+    background: #0B8A6A;
+}
+
+#SendButton:disabled {
+
+    background: #666;
+}
+
+/* =======================================================
+   ScrollBar
+   ======================================================= */
+
+QScrollBar:vertical {
+
+    background: transparent;
+
+    width: 8px;
+
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+
+    background: #666;
+
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+
+    background: #999;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+
+    height: 0;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+
+    background: transparent;
+}
+
+#HeaderInfo{
+    color:#B8B8B8;
+    font-size:12px;
+}
+
+#StatusLabel{
+    color:#10A37F;
+    font-size:14px;
+    font-weight:bold;
+}
+
