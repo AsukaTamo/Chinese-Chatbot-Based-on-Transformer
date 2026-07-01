@@ -27,6 +27,45 @@ def _clone_cache(past_key_values: list[dict] | None) -> list[dict] | None:
     ]
 
 
+# ============================================================
+#  位置编码兼容加载（config.max_len 与 checkpoint 不一致时自动处理）
+# ============================================================
+
+# 确定性计算的位置编码 buffer 名称模式（可跨 max_len 泛化）
+_POS_BUFFER_PATTERNS = ("cos_table", "sin_table", "pe")
+
+
+def _load_state_dict_compat(
+    model: torch.nn.Module,
+    checkpoint_state: dict,
+    *,
+    strict: bool = True,
+) -> tuple[set[str], set[str]]:
+    """
+    兼容加载：自动移除 checkpoint 中形状不匹配的位置编码 buffer，
+    让模型使用新 config.max_len 初始化出的正确值。
+
+    RoPE 的 cos_table/sin_table 和 Transformer 的 pe 都是确定性计
+    算的（仅依赖 d_k/d_model 和 max_len），旧值的前 max_len 位与新表
+    完全一致，所以丢弃旧表不会损失任何信息。
+    """
+    model_sd = model.state_dict()
+    ckpt_sd = dict(checkpoint_state)
+
+    dropped: list[str] = []
+    for key, value in list(ckpt_sd.items()):
+        if key in model_sd and value.shape != model_sd[key].shape:
+            if any(pat in key for pat in _POS_BUFFER_PATTERNS):
+                dropped.append(key)
+                del ckpt_sd[key]
+
+    if dropped:
+        names = "\n    ".join(dropped)
+        print(f"[compat] 位置编码表尺寸变化，已丢弃旧 buffer（将使用新 max_len 重算）:\n    {names}")
+        strict = False  # 丢弃后 checkpoint 缺 key，必须 relaxed 模式
+
+    return model.load_state_dict(ckpt_sd, strict=strict)
+
 
 #  Beam Search 解码器
 
@@ -457,7 +496,7 @@ class GPTChatBot:
 
         self.model = GPT(config)
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        _load_state_dict_compat(self.model, checkpoint["model_state_dict"])
         self.model.to(config.device)
         self.model.eval()
 
@@ -570,7 +609,7 @@ class ChatBot:
 
         self.model = Transformer(config)
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        _load_state_dict_compat(self.model, checkpoint["model_state_dict"])
         self.model.to(config.device)
         self.model.eval()
 
