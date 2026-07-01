@@ -97,11 +97,7 @@ class Config:
                 self.data_paths.extend(json_files)
             elif conv_files:
                 self.data_paths.extend(conv_files)
-            else:
-                raise FileNotFoundError(
-                    f"语料库 '{corpus}' 目录下未找到数据文件: {corpus_dir}\n"
-                    f"请放入 .json (LCCC 格式) 或 .conv (旧格式) 文件"
-                )
+            # 语料目录不存在时不在此处报错——CLI 参数可能随后覆盖 corpora
 
         # 词表路径（按模型类型区分，不同架构词表不同）
         vocab_dir = os.path.join(data_dir, self.corpus_name)

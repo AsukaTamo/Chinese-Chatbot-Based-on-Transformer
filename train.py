@@ -661,6 +661,11 @@ if __name__ == "__main__":
     print(f"[Config] d_model={config.d_model}  batch={config.batch_size}  epochs={config.epochs}")
     print(f"[Config] 分词模式: {config.fenci_mode}")
 
+    if not config.data_paths:
+        print(f"[Error] 未找到语料文件: {config.corpus_name}")
+        print(f"请确认 data/{config.corpus_name}/ 目录下有 .json 或 .conv 文件")
+        exit(1)
+
     if config.model_type == "qwen":
         train_qwen(config)
     elif config.model_type == "gpt":
