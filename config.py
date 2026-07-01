@@ -67,6 +67,10 @@ class Config:
     #  硬件
     device: str = "cuda"
 
+    #  Graphviz 可视化（tools/visualize_models.py 使用）
+    #  Windows 默认路径见注释，其他系统可设为 ""（依赖 PATH）
+    graphviz_bin_path: str = r"C:\Program Files\Graphviz\bin"  # Linux/macOS: ""
+
 
     #  以下字段由 __post_init__ 自动计算，无需手动配置
     data_paths: list = field(default_factory=list)

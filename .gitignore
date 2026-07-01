@@ -11,3 +11,7 @@ checkpoints/
 data/LCCC-base-split/
 
 voice_module/model_voice/
+
+model/
+
+tools/assets/
