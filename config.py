@@ -25,7 +25,7 @@ class Config:
     #  "transformer" = Encoder-Decoder（Lite 版，手写）
     #  "gpt"         = Decoder-Only（Middle 版，手写，多轮记忆）
     #  "qwen"        = Qwen2-1.5B 预训练（Pro 版，HuggingFace）
-    model_type: str = "gpt"
+    model_type: str = "qwen"
 
     #  分词模式
     #  "jieba" = jieba 分词（默认，适用于未分词的原始中文文本）
@@ -35,6 +35,8 @@ class Config:
     #  预训练模型（仅 model_type="qwen" 时使用）
     qwen_model_name: str = "Qwen/Qwen2-1.5B-Instruct"
     qwen_freeze_layers: int = 6      # 微调时冻结前 N 层（0=全量微调）
+    hf_cache_dir: str = ".modelcache"  # HuggingFace 模型缓存目录
+    hf_endpoint: str = "https://hf-mirror.com"  # 国内镜像站
 
 
     #  模型架构参数

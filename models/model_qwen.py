@@ -6,8 +6,15 @@ HuggingFace 预训练模型封装 (Pro 版本)
   - Qwen2-1.5B:     Qwen/Qwen2-1.5B-Instruct   (1.5B, 对话模型)
 
 通过 config.qwen_model_name 切换。
-首次运行自动下载权重，缓存至 ~/.cache/huggingface/
+首次运行自动下载权重，缓存至 config.hf_cache_dir（默认 .modelcache/）。
+默认使用国内镜像 hf-mirror.com。
 """
+
+import os
+
+# 必须在 import transformers 之前设置，否则 huggingface_hub 不生效
+if "HF_ENDPOINT" not in os.environ:
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 import torch
 import torch.nn as nn
@@ -17,16 +24,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 class PretrainedLM(nn.Module):
     """通用 HuggingFace Causal LM 封装，兼容训练/推理接口。"""
 
-    def __init__(self, model_name: str = "uer/qwen-chinese-cluecorpussmall"):
+    def __init__(self, model_name: str = "uer/qwen-chinese-cluecorpussmall",
+                 cache_dir: str | None = None):
         super().__init__()
         self.model_name = model_name
 
         print(f"[HF] 加载预训练模型: {model_name}")
+        print(f"[HF] 缓存目录: {cache_dir or '(default)'}")
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, trust_remote_code=True,
+            model_name, trust_remote_code=True, cache_dir=cache_dir,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, trust_remote_code=True,
+            model_name, trust_remote_code=True, cache_dir=cache_dir,
         )
 
         # pad_token 处理

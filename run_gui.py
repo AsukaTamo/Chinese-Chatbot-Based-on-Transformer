@@ -2,7 +2,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from inference import ChatBot
+from inference import ChatBot, GPTChatBot, QwenChatBot
 from config import Config
 from GUI.main_window import MainWindow
 
@@ -21,10 +21,14 @@ def main():
 
     config = Config()
 
-    chatbot = ChatBot(
-        config.model_save_dir + "/best_model.pt",
-        config
-    )
+    model_path = config.best_model_path
+
+    if config.model_type == "gpt":
+        chatbot = GPTChatBot(model_path, config)
+    elif config.model_type == "qwen":
+        chatbot = QwenChatBot(model_path, config, pretrained=True)
+    else:
+        chatbot = ChatBot(model_path, config)
 
     window = MainWindow(chatbot)
 

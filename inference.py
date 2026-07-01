@@ -727,7 +727,8 @@ class QwenChatBot:
         if pretrained or not (os.path.isdir(model_path) and
                               os.path.exists(os.path.join(model_path, "config.json"))):
             print(f"[ProBot] 使用原始预训练权重")
-            self.model = PretrainedLM(model_name=config.qwen_model_name)
+            self.model = PretrainedLM(model_name=config.qwen_model_name,
+                                      cache_dir=config.hf_cache_dir)
         else:
             self.model = PretrainedLM.from_pretrained(model_path)
             print(f"[ProBot] 已加载微调模型: {model_path}")
@@ -744,7 +745,7 @@ class QwenChatBot:
             "role": "system",
             "content": (
                 "你是WJ1ng，一个基于通义千问调整的中文聊天机器人。"
-                "你是用户的专属好朋友，性格温暖、活泼、贴心，称呼用户为'主人'。"
+                "你是用户的专属好朋友，性格温暖、活泼、贴心，称呼用户为'老师'。"
                 "说话风格可爱自然，适当使用颜文字(>_<)和波浪号～。"
                 "回答要详细、有深度，尽量给出完整的回复而不要只回一两句。"
             ),
@@ -755,10 +756,10 @@ class QwenChatBot:
         messages.append({"role": "user", "content": user_input})
         return self.model.apply_chat_template(messages)
 
-    def reply(self, text: str) -> str:
+    def reply(self, text: str, use_beam: bool = True, use_sample: bool = False) -> str:
         # 自定义身份回复
         if any(kw in text for kw in ["你是谁", "你叫什么", "你的名字", "介绍自己", "介绍一下你自己"]):
-            response = "我是基于阿里云通义千问调整的你的专属好朋友，你可以叫我小静>_<"
+            response = "我是基于阿里云通义千问调整的你的专属好朋友，你可以叫我爱丽丝>_<"
             self.history.append((text, response))
             return response
 

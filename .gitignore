@@ -14,4 +14,4 @@ voice_module/model_voice/
 
 tools/assets/
 
-/model/
+.modelcache/

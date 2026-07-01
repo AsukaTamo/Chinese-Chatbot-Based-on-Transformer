@@ -399,6 +399,128 @@ def build_transformer() -> graphviz.Digraph:
 
 
 # ╔══════════════════════════════════════════════════════════════╗
+# ║          Qwen2-1.5B  Hand-written  (GQA + RoPE)             ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+def build_qwen2_hand() -> graphviz.Digraph:
+    g = _make_graph("Qwen2Hand", "Qwen2-1.5B Architecture  (Hand-written, GQA Decoder-Only)")
+
+    # ── Input ──
+    g.node("qw_inp", "Input Tokens\n(B, seq_len)",
+           shape="ellipse", fillcolor=CLR["io"], penwidth="1.4")
+
+    # ── Embedding ──
+    g.node("qw_emb", "Token Embedding\nvocab=151936, d_model=1536",
+           fillcolor=CLR["embed"], penwidth="1.4")
+
+    g.edge("qw_inp", "qw_emb")
+
+    # ═══════════ Qwen2Block ═══════════
+    with g.subgraph(name="cluster_qwen_block") as c:
+        c.attr(
+            label="Qwen2Block   (x 28 layers)",
+            style="dashed,rounded",
+            bgcolor=CLR["layer_bg"],
+            pencolor="#9e9e9e",
+            penwidth="2.0",
+            fontsize="13",
+            fontname="Helvetica",
+        )
+
+        # ── Sub-block: GQAttention (Grouped Query) ──
+        with c.subgraph(name="cluster_qwen_gqa") as ab:
+            ab.attr(
+                label="GQAttention  (Grouped Query,  Q:12 / KV:2 heads)",
+                style="filled,rounded",
+                fillcolor="#e1f5fe28",
+                pencolor="#0288d1",
+                penwidth="1.6",
+                fontsize="11",
+                color="#0288d1",
+            )
+            ab.node("qw_q",  "Q Projection\n12 heads x d_k",
+                    fillcolor=CLR["attn"])
+            ab.node("qw_k",  "K Projection\n2 heads x d_k",
+                    fillcolor=CLR["cross"])
+            ab.node("qw_v",  "V Projection\n2 heads x d_k",
+                    fillcolor=CLR["cross"])
+            ab.node("qw_rope","RoPE\nbase=1,000,000",
+                    fillcolor=CLR["rope"])
+            ab.node("qw_kv",  "GQA KV-Cache\nrepeat KV x 6",
+                    fillcolor=CLR["attn"])
+            ab.node("qw_sda", "Scaled Dot-Product\nAttention (GQA)",
+                    fillcolor=CLR["attn"])
+            ab.node("qw_o",   "Output Projection\nLinear O (bias=False)",
+                    fillcolor=CLR["attn"])
+
+        # ── Sub-block: SwiGLU MLP ──
+        with c.subgraph(name="cluster_qwen_ffn") as fb:
+            fb.attr(
+                label="SwiGLU MLP",
+                style="filled,rounded",
+                fillcolor="#fce4ec28",
+                pencolor=CLR["ffn"],
+                penwidth="1.6",
+                fontsize="11",
+                color=CLR["ffn"],
+            )
+            fb.node("qw_gate","Linear Gate+Up\n(d_model=1536 -> d_ff=8960)",
+                    fillcolor=CLR["ffn"])
+            fb.node("qw_silu","SiLU(Gate) * Up",
+                    fillcolor=CLR["ffn"])
+            fb.node("qw_down","Linear Down\n(d_ff=8960 -> d_model=1536)",
+                    fillcolor=CLR["ffn"])
+
+        # ── Path nodes ──
+        _node_norm(c, "qw_anorm")
+        _node_norm(c, "qw_fnorm")
+        _node_add(c, "qw_add1")
+        _node_add(c, "qw_add2")
+
+        # ── Attention path edges ──
+        c.edge("qw_anorm", "qw_q")
+        c.edge("qw_anorm", "qw_k")
+        c.edge("qw_anorm", "qw_v")
+        c.edge("qw_q",    "qw_rope")
+        c.edge("qw_k",    "qw_rope")
+        c.edge("qw_q",    "qw_sda")
+        c.edge("qw_k",    "qw_kv")
+        c.edge("qw_v",    "qw_kv")
+        c.edge("qw_kv",   "qw_sda")
+        c.edge("qw_sda",  "qw_o")
+        c.edge("qw_o",    "qw_add1")
+        # Residual
+        c.edge("qw_anorm","qw_add1",
+               style="dashed", penwidth="1.2",
+               color=CLR["residual"], constraint="false")
+
+        # ── FFN path edges ──
+        c.edge("qw_add1",  "qw_fnorm")
+        c.edge("qw_fnorm", "qw_gate")
+        c.edge("qw_gate",  "qw_silu")
+        c.edge("qw_silu",  "qw_down")
+        c.edge("qw_down",  "qw_add2")
+        # Residual
+        c.edge("qw_fnorm", "qw_add2",
+               style="dashed", penwidth="1.2",
+               color=CLR["residual"], constraint="false")
+
+    # ── Output ──
+    g.node("qw_fn",   "RMSNorm\n(Final)", fillcolor=CLR["norm"], penwidth="1.4")
+    g.node("qw_outp", "LM Head  ->  Vocab\n(weight tied, bias=False)",
+           fillcolor=CLR["output"], penwidth="1.4")
+    g.node("qw_logits", "Output Logits\n(B, seq, vocab=151936)",
+           shape="ellipse", fillcolor=CLR["io"], penwidth="1.4")
+
+    g.edge("qw_emb",   "qw_anorm", lhead="cluster_qwen_block")
+    g.edge("qw_add2",  "qw_fn",    ltail="cluster_qwen_block")
+    g.edge("qw_fn",    "qw_outp")
+    g.edge("qw_outp",  "qw_logits")
+
+    return g
+
+
+# ╔══════════════════════════════════════════════════════════════╗
 # ║                         Main                                 ║
 # ╚══════════════════════════════════════════════════════════════╝
 
@@ -414,8 +536,9 @@ def main():
     print("Generating high-resolution architecture diagrams (300 DPI) ...")
 
     for builder, name in [
-        (build_gpt,         "gpt_architecture"),
-        (build_transformer, "transformer_architecture"),
+        (build_gpt,           "gpt_architecture"),
+        (build_transformer,   "transformer_architecture"),
+        (build_qwen2_hand,    "qwen2_hand_architecture"),
     ]:
         print(f"  [{name}] ...", end=" ")
         gv = builder()
